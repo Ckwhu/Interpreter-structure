@@ -321,9 +321,9 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
   switch (CurTok) {
   default:
     return LogError("unknown token when expecting an expression");
-  case tok_identifier:
+  case tok_VARIABLE:
     return ParseIdentifierExpr();
-  case tok_number:
+  case tok_INTEGER:
     return ParseNumberExpr();
   case '(':
     return ParseParenExpr();
@@ -384,6 +384,7 @@ static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
     // Make an anonymous proto.
     auto Proto = llvm::make_unique<PrototypeAST>("__anon_expr",
                                                  std::vector<std::string>());
+
     return llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E));
   }
   return nullptr;
