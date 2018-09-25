@@ -17,17 +17,28 @@
 enum Token {
   tok_eof = -1,
 
-  // commands
-  tok_def = -2,
-  tok_extern = -3,
+  tok_VARIABLE = -2,
+  tok_INTEGER = -3,
+  tok_TEXT = -4,
+  tok_ASSIGN_SYMBOL = -5,
+  tok_FUNC = -6,
+  tok_PRINT = -7,
+  tok_RETURN = -8,
+  tok_CONTINUE = -9,
+  tok_IF = -10,
+  tok_THEN = -11,
+  tok_ELSE = -12,
+  tok_FI = -13,
+  tok_WHILE = -14,
+  tok_DO = -15,
+  tok_DONE = -16,
+  tok_VAR = -17,
 
-  // primary
-  tok_identifier = -4,
-  tok_number = -5
 };
 
 static std::string IdentifierStr; // Filled in if tok_identifier
-static double NumVal;             // Filled in if tok_number
+static double NumVal;             // Filled in if tok_integer
+static std::string StrVal;        // Filled in if tok_text
 
 /// gettok - Return the next token from standard input.
 static int gettok() {
@@ -37,27 +48,78 @@ static int gettok() {
   while (isspace(LastChar))
     LastChar = getchar();
 
+  // skip any comment.
+  if (LastChar == '/') {
+    if (LastChar = getchar() == '/') {
+      while (LastChar != '\n')
+        LastChar = getchar();
+      gettok();
+    }
+  }
+
+  if (LastChar == ':') { // assign_symbol
+    std::string temp;
+    temp = LastChar;
+    LastChar = getchar();
+    if (LastChar == '=') {
+      LastChar = getchar();
+      return tok_ASSIGN_SYMBOL;
+    }
+  }
+
   if (isalpha(LastChar)) { // identifier: [a-zA-Z][a-zA-Z0-9]*
     IdentifierStr = LastChar;
     while (isalnum((LastChar = getchar())))
       IdentifierStr += LastChar;
 
-    if (IdentifierStr == "def")
-      return tok_def;
-    if (IdentifierStr == "extern")
-      return tok_extern;
-    return tok_identifier;
+    if (IdentifierStr == "FUNC")
+      return tok_FUNC;
+    if (IdentifierStr == "PRINT")
+      return tok_PRINT;
+    if (IdentifierStr == "RETURN")
+      return tok_RETURN;
+    if (IdentifierStr == "CONTINUE")
+      return tok_CONTINUE;
+    if (IdentifierStr == "IF")
+      return tok_IF;
+    if (IdentifierStr == "THEN")
+      return tok_THEN;
+    if (IdentifierStr == "ELSE")
+      return tok_ELSE;
+    if (IdentifierStr == "FI")
+      return tok_FI;
+    if (IdentifierStr == "WHILE")
+      return tok_WHILE;
+    if (IdentifierStr == "DO")
+      return tok_DO;
+    if (IdentifierStr == "DONE")
+      return tok_DONE;
+    if (IdentifierStr == "VAR")
+      return tok_VAR;
+    return tok_VARIABLE;
   }
 
-  if (isdigit(LastChar) || LastChar == '.') { // Number: [0-9.]+
+  if (isdigit(LastChar)) { // Number: [0-9]+
     std::string NumStr;
     do {
       NumStr += LastChar;
       LastChar = getchar();
-    } while (isdigit(LastChar) || LastChar == '.');
+    } while (isdigit(LastChar));
 
     NumVal = strtod(NumStr.c_str(), nullptr);
-    return tok_number;
+    return tok_INTEGER;
+  }
+
+  if (LastChar == '\"') {
+    std::string textStr;
+    LastChar = getchar();
+    do {
+      textStr += LastChar;
+      LastChar = getchar();
+    } while (LastChar != '\"');
+    StrVal = textStr;
+    LastChar = getchar();
+    return tok_TEXT;
   }
 
   if (LastChar == '#') {
@@ -316,7 +378,6 @@ static std::unique_ptr<ExprAST> ParseExpression() {
   return ParseBinOpRHS(0, std::move(LHS));
 }
 
-
 /// toplevelexpr ::= expression
 static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
   if (auto E = ParseExpression()) {
@@ -327,7 +388,6 @@ static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
   }
   return nullptr;
 }
-
 
 static void HandleTopLevelExpression() {
   // Evaluate a top-level expression into an anonymous function.
