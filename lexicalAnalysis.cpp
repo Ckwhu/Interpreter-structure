@@ -51,8 +51,9 @@ static int gettok() {
     // skip any comment.
   if (LastChar == '/') {
     if (LastChar = getchar() == '/') {
-      while ((LastChar != '\n') || (isspace(LastChar)))
+      while (LastChar != '\n')
         LastChar = getchar();
+      gettok();
     }
   }
 
@@ -75,7 +76,7 @@ static int gettok() {
       return tok_FUNC;
     if (IdentifierStr == "PRINT")
       return tok_PRINT;
-    if (IdentifierStr == "TRTURN")
+    if (IdentifierStr == "RETURN")
       return tok_RETURN;
     if (IdentifierStr == "CONTINUE")
       return tok_CONTINUE;
@@ -117,7 +118,7 @@ static int gettok() {
       LastChar = getchar();
     } while (LastChar != '\"');
     StrVal = textStr;
-    getchar();
+    LastChar=getchar();
     return tok_TEXT;
   }
 
