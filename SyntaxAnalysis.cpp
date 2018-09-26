@@ -7,6 +7,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include<stdio.h>
+#include<iostream>
 
 //===----------------------------------------------------------------------===//
 // Lexer
@@ -162,6 +164,23 @@ public:
   NumberExprAST(double Val) : Val(Val) {}
 };
 
+///TextExprAST -Expression class for text literals
+class TextExprAST : public ExprAST {
+  std::string Str;
+
+  public:
+  TextExprAST(std::string s) : Str(s) {}
+};
+
+/// VarExprAST - Expression class for var
+class VarExprAST : public ExprAST {
+  std::vector<std::string> VarNames;
+
+public:
+  VarExprAST(std::vector<std::string> VarNames)
+      : VarNames(std::move(VarNames)) {}
+};
+
 /// VariableExprAST - Expression class for referencing a variable, like "a".
 class VariableExprAST : public ExprAST {
   std::string Name;
@@ -213,18 +232,6 @@ public:
              std::unique_ptr<ExprAST> Body)
       : VarName(VarName), Start(std::move(Start)), End(std::move(End)),
         Step(std::move(Step)), Body(std::move(Body)) {}
-};
-
-/// VarExprAST - Expression class for var/in
-class VarExprAST : public ExprAST {
-  std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
-  std::unique_ptr<ExprAST> Body;
-
-public:
-  VarExprAST(
-      std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
-      std::unique_ptr<ExprAST> Body)
-      : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
@@ -299,6 +306,22 @@ static std::unique_ptr<ExprAST> ParseNumberExpr() {
   return std::move(Result);
 }
 
+///textexpr ::=text
+static std::unique_ptr<ExprAST> ParseTextExpr() {
+  auto TextResult = llvm::make_unique<TextExprAST>(StrVal);
+  getNextToken();
+  return std::move(TextResult);
+}
+
+///var a,b,c
+static std::unique_ptr<ExprAST> ParseVarExpr() {
+	getNextToken();//eat VAR
+    std::vector<std::string> variable_list;
+	while (getNextToken() == tok_VARIABLE)
+		variable_list.push_back(std::move(IdentifierStr));
+	return llvm::make_unique<VarExprAST>(variable_list);
+}
+
 /// parenexpr ::= '(' expression ')'
 static std::unique_ptr<ExprAST> ParseParenExpr() {
   getNextToken(); // eat (.
@@ -360,6 +383,10 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
     return ParseIdentifierExpr();
   case tok_INTEGER:
     return ParseNumberExpr();
+  case tok_TEXT:
+    return ParseTextExpr();
+  case tok_VAR:
+    return ParseVarExpr();
   case '(':
     return ParseParenExpr();
   }
@@ -426,24 +453,38 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
     return LogErrorP("Expected '(' in prototype");
 
   std::vector<std::string> ArgNames;
-  while (getNextToken() == tok_VARIABLE)
-    ArgNames.push_back(IdentifierStr);
+  while (true) {
+    CurTok = getNextToken();
+    if (CurTok == tok_VARIABLE)
+      ArgNames.push_back(IdentifierStr);
+    else if (CurTok == 44)
+      continue;
+    else
+      break;
+  }
+    
   if (CurTok != ')')
     return LogErrorP("Expected ')' in prototype");
 
   // success.
   getNextToken(); // eat ')'.
 
+  std::cout << "parsing FUNC";
+  std::cout << "FUNC name is:" << FnName<<" ";
+  std::cout << "parameter list is:";
+  for (int i = 0; i < ArgNames.size(); i++)
+    std::cout<<ArgNames[i]<<" ";
+
   return llvm::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
 }
 
-/// definition ::= 'def' prototype expression
+/// definition ::= 'FUNC' prototype expression
 static std::unique_ptr<FunctionAST> ParseDefinition() {
-  getNextToken(); // eat def.
+  getNextToken(); // eat FUNC.
   auto Proto = ParsePrototype();
   if (!Proto)
     return nullptr;
-
+  getNextToken(); // eat'{'.
   if (auto E = ParseExpression())
     return llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E));
   return nullptr;
@@ -508,11 +549,8 @@ static void MainLoop() {
     case ';': // ignore top-level semicolons.
       getNextToken();
       break;
-    case tok_VARIABLE:
+    case tok_FUNC:
       HandleDefinition();
-      break;
-    case tok_INTEGER:
-      HandleExtern();
       break;
     default:
       HandleTopLevelExpression();
