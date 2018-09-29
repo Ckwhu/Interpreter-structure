@@ -3,12 +3,12 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
 #include <map>
 #include <memory>
+#include <stdio.h>
 #include <string>
 #include <vector>
-#include<stdio.h>
-#include<iostream>
 
 //===----------------------------------------------------------------------===//
 // Lexer
@@ -164,30 +164,45 @@ public:
   NumberExprAST(double Val) : Val(Val) {}
 };
 
-///TextExprAST -Expression class for text literals
-class TextExprAST : public ExprAST {
-  std::string Str;
-
-  public:
-  TextExprAST(std::string s) : Str(s) {}
-};
-
-/// VarExprAST - Expression class for var
-class VarExprAST : public ExprAST {
-  std::vector<std::string> VarNames;
-
-public:
-  VarExprAST(std::vector<std::string> VarNames)
-      : VarNames(std::move(VarNames)) {}
-};
-
 /// VariableExprAST - Expression class for referencing a variable, like "a".
 class VariableExprAST : public ExprAST {
   std::string Name;
 
 public:
   VariableExprAST(const std::string &Name) : Name(Name) {}
+  const std::string &getName() const { return Name; }
 };
+
+/// TextExprAST -Expression class for text literals
+class TextExprAST : public ExprAST {
+  std::string Str;
+
+public:
+  TextExprAST(std::string s) : Str(s) {}
+};
+
+/// VarExprAST - Expression class for var/in
+class VarExprAST : public ExprAST {
+  std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+  std::unique_ptr<ExprAST> Body;
+
+public:
+  VarExprAST(
+      std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
+      std::unique_ptr<ExprAST> Body)
+      : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
+};
+
+/// AssignVariableExprAST statement expression class for referencing assignment
+/// ,like a:=100
+// class AssignVariableExprAST : public ExprAST {
+//  std::string Name;
+//  ExprAST *expr;
+//
+//  public:
+//  AssignVariableExprAST(const std::string &Name, ExprAST
+//  *expr):Name(Name),expr(expr){};
+//};
 
 /// BinaryExprAST - Expression class for a binary operator.
 class BinaryExprAST : public ExprAST {
@@ -221,17 +236,31 @@ public:
       : Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {}
 };
 
-/// ForExprAST - Expression class for for/in.
-class ForExprAST : public ExprAST {
-  std::string VarName;
-  std::unique_ptr<ExprAST> Start, End, Step, Body;
+/// whileExprAST - Expression class for while
+class WhileExprAST : public ExprAST {
+  std::unique_ptr<ExprAST> Cond, DO;
 
 public:
-  ForExprAST(const std::string &VarName, std::unique_ptr<ExprAST> Start,
-             std::unique_ptr<ExprAST> End, std::unique_ptr<ExprAST> Step,
-             std::unique_ptr<ExprAST> Body)
-      : VarName(VarName), Start(std::move(Start)), End(std::move(End)),
-        Step(std::move(Step)), Body(std::move(Body)) {}
+  WhileExprAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<ExprAST> DO)
+      : Cond(std::move(Cond)), DO(std::move(DO)) {}
+};
+
+/// PrintExprAST
+class PrintExprAST : public ExprAST {
+  std::vector<std::unique_ptr<ExprAST>> returnConts;
+
+public:
+  PrintExprAST(std::vector<std::unique_ptr<ExprAST>> returnConts)
+      : returnConts(std::move(returnConts)) {}
+};
+
+///ReturnExprAST
+class ReturnExprAST : public ExprAST {
+  std::unique_ptr<ExprAST> returnCont;
+
+public:
+  ReturnExprAST(std::unique_ptr<ExprAST> returnCont)
+      : returnCont(std::move(returnCont)) {}
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
@@ -306,20 +335,58 @@ static std::unique_ptr<ExprAST> ParseNumberExpr() {
   return std::move(Result);
 }
 
-///textexpr ::=text
+/// textexpr ::=text
 static std::unique_ptr<ExprAST> ParseTextExpr() {
   auto TextResult = llvm::make_unique<TextExprAST>(StrVal);
   getNextToken();
   return std::move(TextResult);
 }
 
-///var a,b,c
+/// var a,b,c
 static std::unique_ptr<ExprAST> ParseVarExpr() {
-	getNextToken();//eat VAR
-    std::vector<std::string> variable_list;
-	while (getNextToken() == tok_VARIABLE)
-		variable_list.push_back(std::move(IdentifierStr));
-	return llvm::make_unique<VarExprAST>(variable_list);
+  getNextToken(); // eat the var.
+
+  std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+
+  // At least one variable name is required.
+  if (CurTok != tok_VARIABLE)
+    return LogError("expected identifier after var");
+
+  while (true) {
+    std::string Name = IdentifierStr;
+    getNextToken(); // eat identifier.
+
+    // Read the optional initializer.
+    std::unique_ptr<ExprAST> Init = nullptr;
+    if (CurTok == '=') {
+      getNextToken(); // eat the '='.
+
+      Init = ParseExpression();
+      if (!Init)
+        return nullptr;
+    }
+
+    VarNames.push_back(std::make_pair(Name, std::move(Init)));
+
+    // End of var list, exit loop.
+    if (CurTok != ',')
+      break;
+    getNextToken(); // eat the ','.
+
+    if (CurTok != tok_VARIABLE)
+      return LogError("expected identifier list after var");
+  }
+
+  // At this point, we have to have 'in'.
+  // if (CurTok != tok_in)
+  // return LogError("expected 'in' keyword after 'var'");
+  // getNextToken(); // eat 'in'.
+
+  auto Body = ParseExpression();
+  if (!Body)
+    return nullptr;
+  std::cout << "解析到变量定义";
+  return llvm::make_unique<VarExprAST>(std::move(VarNames), std::move(Body));
 }
 
 /// parenexpr ::= '(' expression ')'
@@ -342,6 +409,12 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   std::string IdName = IdentifierStr;
 
   getNextToken(); // eat identifier.
+
+  // Parse assignment_statement	: VARIABLE ASSIGN_SYMBOL expression
+  // if (CurTok == tok_ASSIGN_SYMBOL) {
+  //  getNextToken(); // eat  tok_ASSIGN_SYMBOL
+  //  return llvm::make_unique<AssignVariableExprAST>(IdName,ParseExpression());
+  //}
 
   if (CurTok != '(') // Simple variable ref.
     return llvm::make_unique<VariableExprAST>(IdName);
@@ -371,6 +444,87 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   return llvm::make_unique<CallExprAST>(IdName, std::move(Args));
 }
 
+/// ifexpr ::= 'if' expression 'then' expression 'else' expression
+static std::unique_ptr<ExprAST> ParseIfExpr() {
+  getNextToken(); // eat the if.
+
+  // condition.
+  auto Cond = ParseExpression();
+  if (!Cond)
+    return nullptr;
+
+  if (CurTok != tok_THEN)
+    return LogError("expected then");
+  getNextToken(); // eat the then
+
+  auto Then = ParseExpression();
+  if (!Then)
+    return nullptr;
+
+  if ((CurTok != tok_ELSE) || (CurTok != tok_FI))
+    return LogError("expected else or fi");
+
+  if (CurTok != tok_FI) {
+    getNextToken();
+    return llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
+                                        std::move(nullptr));
+  }
+
+  getNextToken();
+
+  auto Else = ParseExpression();
+  if (!Else)
+    return nullptr;
+
+  if (CurTok == tok_FI)
+    return llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
+                                        std::move(Else));
+  else
+    return LogError("expected fi");
+}
+
+/// while_statement	: WHILE expression DO statement DONE
+static std::unique_ptr<ExprAST> ParseWhileExpr() {
+  getNextToken(); // eat the while.
+
+  // condition.
+  auto Cond = ParseExpression();
+  if (!Cond)
+    return nullptr;
+
+  if (CurTok != tok_DO)
+    return LogError("expected DO");
+  getNextToken(); // eat the DO
+
+  auto Do = ParseExpression();
+  if (!Do)
+    return nullptr;
+
+  if (CurTok != tok_DONE)
+    return LogError("expected DONE");
+
+  return llvm::make_unique<WhileExprAST>(std::move(Cond), std::move(Do));
+}
+
+///print_item	: expression| TEXT
+static std::unique_ptr<ExprAST> ParsePrintExpr() { 
+	getNextToken(); //eat print
+	auto printCont = ParseExpression();
+        return llvm::make_unique<PrintExprAST>(std::move(printCont));
+};
+
+///return_statement: RETURN expression
+static std::unique_ptr<ExprAST> ParseReturnExpr() {
+  getNextToken(); // eat print
+  std::vector<std::unique_ptr<ExprAST>> returnConts;
+  while (CurTok != ',') {
+    auto returnCont = ParseExpression();
+    returnConts.push_back(std::move(returnCont));
+  }
+  return llvm::make_unique<ReturnExprAST>(std::move(returnConts));
+
+}
+
 /// primary
 ///   ::= identifierexpr
 ///   ::= numberexpr
@@ -383,10 +537,20 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
     return ParseIdentifierExpr();
   case tok_INTEGER:
     return ParseNumberExpr();
-  case tok_TEXT:
+   case tok_TEXT:
     return ParseTextExpr();
   case tok_VAR:
     return ParseVarExpr();
+  case tok_CONTINUE:
+	  //这个还不知道怎么写
+  case tok_IF:
+    return ParseIfExpr();
+  case tok_WHILE:
+    return ParseWhileExpr();
+  case tok_PRINT:
+    return ParsePrintExpr();
+  case tok_RETURN:
+    return ParseReturnExpr();
   case '(':
     return ParseParenExpr();
   }
@@ -440,6 +604,9 @@ static std::unique_ptr<ExprAST> ParseExpression() {
   return ParseBinOpRHS(0, std::move(LHS));
 }
 
+/// statement
+static std::unique_ptr<ExprAST> ParseStatement() {}
+
 /// prototype
 ///   ::= id '(' id* ')'
 static std::unique_ptr<PrototypeAST> ParsePrototype() {
@@ -462,7 +629,7 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
     else
       break;
   }
-    
+
   if (CurTok != ')')
     return LogErrorP("Expected ')' in prototype");
 
@@ -470,10 +637,10 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
   getNextToken(); // eat ')'.
 
   std::cout << "parsing FUNC";
-  std::cout << "FUNC name is:" << FnName<<" ";
+  std::cout << "FUNC name is:" << FnName << " ";
   std::cout << "parameter list is:";
   for (int i = 0; i < ArgNames.size(); i++)
-    std::cout<<ArgNames[i]<<" ";
+    std::cout << ArgNames[i] << " ";
 
   return llvm::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
 }
@@ -501,12 +668,6 @@ static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
   return nullptr;
 }
 
-/// external ::= 'extern' prototype
-static std::unique_ptr<PrototypeAST> ParseExtern() {
-  getNextToken(); // eat extern.
-  return ParsePrototype();
-}
-
 //===----------------------------------------------------------------------===//
 // Top-Level parsing
 //===----------------------------------------------------------------------===//
@@ -514,15 +675,6 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 static void HandleDefinition() {
   if (ParseDefinition()) {
     fprintf(stderr, "Parsed a function definition.\n");
-  } else {
-    // Skip token for error recovery.
-    getNextToken();
-  }
-}
-
-static void HandleExtern() {
-  if (ParseExtern()) {
-    fprintf(stderr, "Parsed an extern\n");
   } else {
     // Skip token for error recovery.
     getNextToken();
@@ -552,6 +704,7 @@ static void MainLoop() {
     case tok_FUNC:
       HandleDefinition();
       break;
+
     default:
       HandleTopLevelExpression();
       break;
