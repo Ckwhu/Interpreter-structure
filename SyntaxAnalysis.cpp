@@ -254,7 +254,7 @@ public:
       : returnConts(std::move(returnConts)) {}
 };
 
-///ReturnExprAST
+/// ReturnExprAST
 class ReturnExprAST : public ExprAST {
   std::unique_ptr<ExprAST> returnCont;
 
@@ -417,7 +417,10 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   //}
 
   if (CurTok != '(') // Simple variable ref.
+  {
+    std::cout << "解析到变量" << IdName << "\n";
     return llvm::make_unique<VariableExprAST>(IdName);
+  }
 
   // Call.
   getNextToken(); // eat (
@@ -438,6 +441,12 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
     }
   }
 
+ /* std::cout << "解析到函数调用,调用函数为：" << IdName << "参数为：";
+  for (int j = 0; j < Args.size(); j++) {
+    std::cout << Args[j] << " ";
+  }
+  std::cout << "\n";
+*/
   // Eat the ')'.
   getNextToken();
 
@@ -506,14 +515,14 @@ static std::unique_ptr<ExprAST> ParseWhileExpr() {
   return llvm::make_unique<WhileExprAST>(std::move(Cond), std::move(Do));
 }
 
-///print_item	: expression| TEXT
-static std::unique_ptr<ExprAST> ParsePrintExpr() { 
-	getNextToken(); //eat print
-	auto printCont = ParseExpression();
-        return llvm::make_unique<PrintExprAST>(std::move(printCont));
+/// print_item	: expression| TEXT
+static std::unique_ptr<ExprAST> ParsePrintExpr() {
+  getNextToken(); // eat print
+  auto printCont = ParseExpression();
+  return llvm::make_unique<PrintExprAST>(std::move(printCont));
 };
 
-///return_statement: RETURN expression
+/// return_statement: RETURN expression
 static std::unique_ptr<ExprAST> ParseReturnExpr() {
   getNextToken(); // eat print
   std::vector<std::unique_ptr<ExprAST>> returnConts;
@@ -522,7 +531,6 @@ static std::unique_ptr<ExprAST> ParseReturnExpr() {
     returnConts.push_back(std::move(returnCont));
   }
   return llvm::make_unique<ReturnExprAST>(std::move(returnConts));
-
 }
 
 /// primary
@@ -537,12 +545,12 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
     return ParseIdentifierExpr();
   case tok_INTEGER:
     return ParseNumberExpr();
-   case tok_TEXT:
+  case tok_TEXT:
     return ParseTextExpr();
   case tok_VAR:
     return ParseVarExpr();
   case tok_CONTINUE:
-	  //这个还不知道怎么写
+    //这个还不知道怎么写
   case tok_IF:
     return ParseIfExpr();
   case tok_WHILE:
@@ -704,7 +712,6 @@ static void MainLoop() {
     case tok_FUNC:
       HandleDefinition();
       break;
-
     default:
       HandleTopLevelExpression();
       break;
