@@ -154,6 +154,7 @@ namespace {
 class ExprAST {
 public:
   virtual ~ExprAST() = default;
+  virtual void print()=0;
 };
 
 /// NumberExprAST - Expression class for numeric literals like "1.0".
@@ -162,7 +163,10 @@ class NumberExprAST : public ExprAST {
 
 public:
   NumberExprAST(double Val) : Val(Val) {}
+  void print() { std::cout << "解析到数值，数值为：" << Val << "\n"; }
 };
+
+
 
 /// VariableExprAST - Expression class for referencing a variable, like "a".
 class VariableExprAST : public ExprAST {
@@ -171,6 +175,7 @@ class VariableExprAST : public ExprAST {
 public:
   VariableExprAST(const std::string &Name) : Name(Name) {}
   const std::string &getName() const { return Name; }
+  void print() { std::cout << "解析到变量，变量名为：" << Name << "\n"; }
 };
 
 /// TextExprAST -Expression class for text literals
@@ -179,6 +184,7 @@ class TextExprAST : public ExprAST {
 
 public:
   TextExprAST(std::string s) : Str(s) {}
+  void print() { std::cout << "解析到字符串，字符串为：" << Str << "\n"; }
 };
 
 /// VarExprAST - Expression class for var/in
@@ -191,6 +197,7 @@ public:
       std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
       std::unique_ptr<ExprAST> Body)
       : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
+  void print() { std::cout << "解析到变量定义"<<"\n"; }
 };
 
 /// AssignVariableExprAST statement expression class for referencing assignment
@@ -213,6 +220,14 @@ public:
   BinaryExprAST(char Op, std::unique_ptr<ExprAST> LHS,
                 std::unique_ptr<ExprAST> RHS)
       : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
+  void print() {
+    std::cout << "解析二元表达式,左部为：";
+    LHS->print();
+    std::cout << "\n"<<"运算符为"<<Op<<"\n";
+    std::cout << "右部为：";
+    RHS->print();
+    std::cout << "\n";
+  }
 };
 
 /// CallExprAST - Expression class for function calls.
@@ -224,6 +239,13 @@ public:
   CallExprAST(const std::string &Callee,
               std::vector<std::unique_ptr<ExprAST>> Args)
       : Callee(Callee), Args(std::move(Args)) {}
+  void print() {
+    std::cout << "解析到调用,调用名为：" << Callee;
+    std::cout << "参数为：";
+    for (int i = 0; i < Args.size(); i++) {
+      Args[i]->print();
+    }
+  }
 };
 
 /// IfExprAST - Expression class for if/then/else.
@@ -234,6 +256,14 @@ public:
   IfExprAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<ExprAST> Then,
             std::unique_ptr<ExprAST> Else)
       : Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {}
+  void print() {
+    std::cout << "解析到if语句,条件为：";
+    Cond->print();
+    std::cout << "Then语句为：";
+    Then->print();
+    std::cout << "Else语句为：";
+    Else->print();
+  }
 };
 
 /// whileExprAST - Expression class for while
@@ -243,15 +273,25 @@ class WhileExprAST : public ExprAST {
 public:
   WhileExprAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<ExprAST> DO)
       : Cond(std::move(Cond)), DO(std::move(DO)) {}
+  void print() { std::cout << "解析到while语句，条件为："; 
+  Cond->print();
+    std::cout << "DO为：";
+  DO->print();
+  }
 };
 
 /// PrintExprAST
 class PrintExprAST : public ExprAST {
-  std::vector<std::unique_ptr<ExprAST>> returnConts;
+  std::vector<std::unique_ptr<ExprAST>> printConts;
 
 public:
-  PrintExprAST(std::vector<std::unique_ptr<ExprAST>> returnConts)
-      : returnConts(std::move(returnConts)) {}
+  PrintExprAST(std::vector<std::unique_ptr<ExprAST>> printConts)
+      : printConts(std::move(printConts)) {}
+  void print() { std::cout << "解析到print语句，打印的内容为：";
+    for (int i = 0; i < printConts.size(); i++) {
+      printConts[i]->print();
+    }
+  }
 };
 
 /// ReturnExprAST
@@ -261,6 +301,10 @@ class ReturnExprAST : public ExprAST {
 public:
   ReturnExprAST(std::unique_ptr<ExprAST> returnCont)
       : returnCont(std::move(returnCont)) {}
+  void print() {
+    std::cout << "解析到return语句，打印的内容为：";
+    returnCont->print();
+  }
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
@@ -275,6 +319,13 @@ public:
       : Name(Name), Args(std::move(Args)) {}
 
   const std::string &getName() const { return Name; }
+  void print() {
+    std::cout << "解析到函数原型,函数名为：" << Name << "参数列表为:";
+    for (int i = 0; i < Args.size(); i++) {
+      std::cout << Args[i] << " ";
+    }
+    std::cout << "\n";
+  }
 };
 
 /// FunctionAST - This class represents a function definition itself.
@@ -286,6 +337,12 @@ public:
   FunctionAST(std::unique_ptr<PrototypeAST> Proto,
               std::unique_ptr<ExprAST> Body)
       : Proto(std::move(Proto)), Body(std::move(Body)) {}
+  void print() { std::cout << "解析到函数，函数原型为：";
+    Proto->print();
+    std::cout << "函数体为：";
+    Body->print();
+    std::cout << "\n";
+  }
 };
 
 } // end anonymous namespace
@@ -332,6 +389,7 @@ static std::unique_ptr<ExprAST> ParseExpression();
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
   auto Result = llvm::make_unique<NumberExprAST>(NumVal);
   getNextToken(); // consume the number
+  //Result->print();
   return std::move(Result);
 }
 
@@ -339,6 +397,7 @@ static std::unique_ptr<ExprAST> ParseNumberExpr() {
 static std::unique_ptr<ExprAST> ParseTextExpr() {
   auto TextResult = llvm::make_unique<TextExprAST>(StrVal);
   getNextToken();
+  TextResult->print();
   return std::move(TextResult);
 }
 
@@ -358,9 +417,8 @@ static std::unique_ptr<ExprAST> ParseVarExpr() {
 
     // Read the optional initializer.
     std::unique_ptr<ExprAST> Init = nullptr;
-    if (CurTok == '=') {
-      getNextToken(); // eat the '='.
-
+    if (CurTok == tok_ASSIGN_SYMBOL) {
+      getNextToken(); // eat the '：='.
       Init = ParseExpression();
       if (!Init)
         return nullptr;
@@ -382,10 +440,12 @@ static std::unique_ptr<ExprAST> ParseVarExpr() {
   // return LogError("expected 'in' keyword after 'var'");
   // getNextToken(); // eat 'in'.
 
-  auto Body = ParseExpression();
-  if (!Body)
-    return nullptr;
-  std::cout << "解析到变量定义";
+  // auto Body = ParseExpression();
+  // if (!Body)
+  //  return nullptr;
+  auto Body = nullptr;
+  //std::cout << "解析到变量定义";
+  llvm::make_unique<VarExprAST>(std::move(VarNames), std::move(Body))->print();
   return llvm::make_unique<VarExprAST>(std::move(VarNames), std::move(Body));
 }
 
@@ -418,7 +478,7 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
 
   if (CurTok != '(') // Simple variable ref.
   {
-    std::cout << "解析到变量" << IdName << "\n";
+    //std::cout << "解析到变量" << IdName << "\n";
     return llvm::make_unique<VariableExprAST>(IdName);
   }
 
@@ -440,21 +500,15 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
       getNextToken();
     }
   }
-
- /* std::cout << "解析到函数调用,调用函数为：" << IdName << "参数为：";
-  for (int j = 0; j < Args.size(); j++) {
-    std::cout << Args[j] << " ";
-  }
-  std::cout << "\n";
-*/
   // Eat the ')'.
   getNextToken();
 
   return llvm::make_unique<CallExprAST>(IdName, std::move(Args));
 }
 
+
 /// ifexpr ::= 'if' expression 'then' expression 'else' expression
-static std::unique_ptr<ExprAST> ParseIfExpr() {
+ static std::unique_ptr<ExprAST> ParseIfExpr() {
   getNextToken(); // eat the if.
 
   // condition.
@@ -470,10 +524,10 @@ static std::unique_ptr<ExprAST> ParseIfExpr() {
   if (!Then)
     return nullptr;
 
-  if ((CurTok != tok_ELSE) || (CurTok != tok_FI))
+  if ((CurTok != tok_ELSE) && (CurTok != tok_FI))
     return LogError("expected else or fi");
 
-  if (CurTok != tok_FI) {
+  if (CurTok == tok_FI) {
     getNextToken();
     return llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
                                         std::move(nullptr));
@@ -485,15 +539,20 @@ static std::unique_ptr<ExprAST> ParseIfExpr() {
   if (!Else)
     return nullptr;
 
-  if (CurTok == tok_FI)
+  if (CurTok == tok_FI) {
+    llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
+                                 std::move(Else))
+        ->print();
     return llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
                                         std::move(Else));
+  }
+   
   else
     return LogError("expected fi");
 }
 
 /// while_statement	: WHILE expression DO statement DONE
-static std::unique_ptr<ExprAST> ParseWhileExpr() {
+ static std::unique_ptr<ExprAST> ParseWhileExpr() {
   getNextToken(); // eat the while.
 
   // condition.
@@ -505,32 +564,38 @@ static std::unique_ptr<ExprAST> ParseWhileExpr() {
     return LogError("expected DO");
   getNextToken(); // eat the DO
 
-  auto Do = ParseExpression();
+  auto Do = ParseExpression();//这里可能会出问题，表达式可能没有被完全解析
   if (!Do)
     return nullptr;
 
   if (CurTok != tok_DONE)
     return LogError("expected DONE");
 
+  llvm::make_unique<WhileExprAST>(std::move(Cond), std::move(Do))->print();
   return llvm::make_unique<WhileExprAST>(std::move(Cond), std::move(Do));
 }
 
 /// print_item	: expression| TEXT
-static std::unique_ptr<ExprAST> ParsePrintExpr() {
+ static std::unique_ptr<ExprAST> ParsePrintExpr() {
   getNextToken(); // eat print
+  std::vector<std::unique_ptr<ExprAST>> printConts;
   auto printCont = ParseExpression();
-  return llvm::make_unique<PrintExprAST>(std::move(printCont));
+  printConts.push_back(std::move(printCont));
+  while (CurTok == ',') {
+    getNextToken(); // eat ,
+       auto printCont = ParseExpression();
+       printConts.push_back(std::move(printCont));
+     }
+  llvm::make_unique<PrintExprAST>(std::move(printConts))->print();
+  return llvm::make_unique<PrintExprAST>(std::move(printConts));
 };
 
 /// return_statement: RETURN expression
-static std::unique_ptr<ExprAST> ParseReturnExpr() {
+ static std::unique_ptr<ExprAST> ParseReturnExpr() {
   getNextToken(); // eat print
-  std::vector<std::unique_ptr<ExprAST>> returnConts;
-  while (CurTok != ',') {
-    auto returnCont = ParseExpression();
-    returnConts.push_back(std::move(returnCont));
-  }
-  return llvm::make_unique<ReturnExprAST>(std::move(returnConts));
+  auto returnCont = ParseExpression();
+  llvm::make_unique<ReturnExprAST>(std::move(returnCont))->print();
+  return llvm::make_unique<ReturnExprAST>(std::move(returnCont));
 }
 
 /// primary
@@ -574,8 +639,10 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 
     // If this is a binop that binds at least as tightly as the current binop,
     // consume it, otherwise we are done.
-    if (TokPrec < ExprPrec)
+    if (TokPrec < ExprPrec) {
+      //LHS->print();
       return LHS;
+    }
 
     // Okay, we know this is a binop.
     int BinOp = CurTok;
@@ -598,6 +665,7 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
     // Merge LHS/RHS.
     LHS =
         llvm::make_unique<BinaryExprAST>(BinOp, std::move(LHS), std::move(RHS));
+    LHS->print();
   }
 }
 
@@ -608,7 +676,6 @@ static std::unique_ptr<ExprAST> ParseExpression() {
   auto LHS = ParsePrimary();
   if (!LHS)
     return nullptr;
-
   return ParseBinOpRHS(0, std::move(LHS));
 }
 
@@ -644,11 +711,11 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
   // success.
   getNextToken(); // eat ')'.
 
-  std::cout << "parsing FUNC";
+ /* std::cout << "parsing FUNC";
   std::cout << "FUNC name is:" << FnName << " ";
   std::cout << "parameter list is:";
   for (int i = 0; i < ArgNames.size(); i++)
-    std::cout << ArgNames[i] << " ";
+    std::cout << ArgNames[i] << " ";*/
 
   return llvm::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
 }
@@ -660,8 +727,11 @@ static std::unique_ptr<FunctionAST> ParseDefinition() {
   if (!Proto)
     return nullptr;
   getNextToken(); // eat'{'.
-  if (auto E = ParseExpression())
+  if (auto E = ParseExpression()) {
+    llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E))->print();
     return llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+  }
+   
   return nullptr;
 }
 
