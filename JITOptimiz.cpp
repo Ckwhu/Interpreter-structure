@@ -1,3 +1,4 @@
+#include "../include/KaleidoscopeJIT.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/BasicBlock.h"
@@ -5,21 +6,31 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/GVN.h"
 #include <algorithm>
+#include <cassert>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
+#include<iostream>
 
 using namespace llvm;
+using namespace llvm::orc;
+
 
 //===----------------------------------------------------------------------===//
 // Lexer
@@ -124,7 +135,7 @@ static int gettok() {
     NumVal = strtod(NumStr.c_str(), nullptr);
     return tok_INTEGER;
   }
-  ////×ªÒå×Ö·ûĞèÒªÊµÏÖ
+  ////è½¬ä¹‰å­—ç¬¦éœ€è¦å®ç°
   if (LastChar == '\"') {
     std::string textStr;
     LastChar = getchar();
@@ -320,14 +331,17 @@ static int getNextToken() { return CurTok = gettok(); }
 /// defined.
 static std::map<char, int> BinopPrecedence;
 
-//// Code Generation  ±äÁ¿×¼±¸   ////
+//// Code Generation  å˜é‡å‡†å¤‡   ////
 
 static LLVMContext TheContext;
 static IRBuilder<> Builder(TheContext);
 static std::unique_ptr<Module> TheModule;
 static std::map<std::string, Value *> NamedValues;
+static std::unique_ptr<legacy::FunctionPassManager> TheFPM;
+static std::unique_ptr<KaleidoscopeJIT> TheJIT;//è¿™ä¸ªåœ°æ–¹è¦æ”¹ï¼Œæ”¹æˆæˆ‘ä»¬ç¼–è¯‘çš„è¯­è¨€ï¼ï¼ï¼
+static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
-//// Code Generation  ±äÁ¿×¼±¸ END  ////
+//// Code Generation  å˜é‡å‡†å¤‡ END  ////
 
 /// GetTokPrecedence - Get the precedence of the pending binary operator token.
 static int GetTokPrecedence() {
@@ -410,7 +424,7 @@ static std::unique_ptr<ExprAST> ParseVarExpr() {
   /*auto Body = ParseExpression();
   if (!Body)
     return nullptr;*/
-  std::cout << "½âÎöµ½±äÁ¿¶¨Òå±í´ïÊ½";
+  std::cout << "è§£æåˆ°å˜é‡å®šä¹‰è¡¨è¾¾å¼";
   return llvm::make_unique<VarExprAST>(std::move(VarNames), nullptr);
 }
 
@@ -443,7 +457,7 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
 
   if (CurTok != '(') // Simple variable ref.
   {
-    std::cout << "½âÎöµ½±äÁ¿" << IdName << "\n";
+    std::cout << "è§£æåˆ°å˜é‡" << IdName << "\n";
     std::unique_ptr<VariableExprAST> varPtr =
         llvm::make_unique<VariableExprAST>(IdName);
     NamedValues[IdName] = NumberExprAST(0.0).codegen();
@@ -469,7 +483,7 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
     }
   }
 
-  /* std::cout << "½âÎöµ½º¯Êıµ÷ÓÃ,µ÷ÓÃº¯ÊıÎª£º" << IdName << "²ÎÊıÎª£º";
+  /* std::cout << "è§£æåˆ°å‡½æ•°è°ƒç”¨,è°ƒç”¨å‡½æ•°ä¸ºï¼š" << IdName << "å‚æ•°ä¸ºï¼š";
    for (int j = 0; j < Args.size(); j++) {
      std::cout << Args[j] << " ";
    }
@@ -578,7 +592,7 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
   case tok_VAR:
     return ParseVarExpr();
   case tok_CONTINUE:
-    //Õâ¸ö»¹²»ÖªµÀÔõÃ´Ğ´
+    //è¿™ä¸ªè¿˜ä¸çŸ¥é“æ€ä¹ˆå†™
   case tok_IF:
     return ParseIfExpr();
   case tok_WHILE:
@@ -722,6 +736,21 @@ Value *LogErrorV(const char *Str) {
   return nullptr;
 }
 
+Function *getFunction(std::string Name) {
+  // First, see if the function has already been added to the current module.
+  if (auto *F = TheModule->getFunction(Name))
+    return F;
+
+  // If not, check whether we can codegen the declaration from some existing
+  // prototype.
+  auto FI = FunctionProtos.find(Name);
+  if (FI != FunctionProtos.end())
+    return FI->second->codegen();
+
+  // If no existing prototype exists, return null.
+  return nullptr;
+}
+
 Value *NumberExprAST::codegen() {
   return ConstantFP::get(TheContext, APFloat(Val));
 }
@@ -771,7 +800,8 @@ Value *BinaryExprAST::codegen() {
 
 Value *CallExprAST::codegen() {
   // Look up the name in the global module table.
-  Function *CalleeF = TheModule->getFunction(Callee);
+  Function *CalleeF = getFunction(Callee);
+  //Function *CalleeF = TheModule->getFunction(Callee);
   if (!CalleeF)
     return LogErrorV("Unknown function referenced");
 
@@ -787,7 +817,7 @@ Value *CallExprAST::codegen() {
   }
   return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
 }
-//´ıÍêÉÆ
+//å¾…å®Œå–„
 Value *IfExprAST::codegen() {
   Value *CondV = Cond->codegen();
   if (!CondV)
@@ -841,7 +871,7 @@ Value *IfExprAST::codegen() {
 }
 // TODO
 Value *WhileExprAST::codegen() { return nullptr; }
-//´ıÍêÉÆ
+//å¾…å®Œå–„
 Value *PrintExprAST::codegen() {
   // Look up the name in the global module table.
   Function *CalleeF = TheModule->getFunction("PRINT");
@@ -885,7 +915,10 @@ Function *PrototypeAST::codegen() {
 
 Function *FunctionAST::codegen() {
   // First, check for an existing function from a previous 'extern' declaration.
-  Function *TheFunction = TheModule->getFunction(Proto->getName());
+  auto &P = *Proto;
+  FunctionProtos[Proto->getName()] = std::move(Proto);
+  Function *TheFunction = getFunction(P.getName());
+ // Function *TheFunction = TheModule->getFunction(Proto->getName());
 
   if (!TheFunction)
     TheFunction = Proto->codegen();
@@ -909,6 +942,8 @@ Function *FunctionAST::codegen() {
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
 
+    // Optimize the function.
+    TheFPM->run(*TheFunction);
     return TheFunction;
   }
 
@@ -921,12 +956,35 @@ Function *FunctionAST::codegen() {
 // Top-Level parsing and JIT Driver
 //===----------------------------------------------------------------------===//
 
+static void InitializeModuleAndPassManager() {
+  // Open a new module.
+  TheModule = llvm::make_unique<Module>("my cool jit", TheContext);
+  auto dl = TheJIT->getTargetMachine().createDataLayout();
+  TheModule->setDataLayout(dl);
+
+  // Create a new pass manager attached to it.
+  TheFPM = llvm::make_unique<legacy::FunctionPassManager>(TheModule.get());
+
+  // Do simple "peephole" optimizations and bit-twiddling optzns.
+  TheFPM->add(createInstructionCombiningPass());
+  // Reassociate expressions.
+  TheFPM->add(createReassociatePass());
+  // Eliminate Common SubExpressions.
+  TheFPM->add(createGVNPass());
+  // Simplify the control flow graph (deleting unreachable blocks, etc).
+  TheFPM->add(createCFGSimplificationPass());
+
+  TheFPM->doInitialization();
+}
+
 static void HandleDefinition() {
   if (auto FnAST = ParseDefinition()) {
     if (auto *FnIR = FnAST->codegen()) {
       fprintf(stderr, "Read function definition:");
       FnIR->print(errs());
       fprintf(stderr, "\n");
+      TheJIT->addModule(std::move(TheModule));
+      InitializeModuleAndPassManager();
     }
   } else {
     // Skip token for error recovery.
@@ -950,11 +1008,33 @@ static void HandleExtern() {
 static void HandleTopLevelExpression() {
   // Evaluate a top-level expression into an anonymous function.
   if (auto FnAST = ParseTopLevelExpr()) {
-    if (auto *FnIR = FnAST->codegen()) {
+    if (auto * FnIR = FnAST->codegen()) {
       fprintf(stderr, "Read top-level expression:");
       FnIR->print(errs());
       fprintf(stderr, "\n");
+      // JIT the module containing the anonymous expression, keeping a handle so
+      // we can free it later.
+      auto H = TheJIT->addModule(std::move(TheModule));
+      InitializeModuleAndPassManager();
+
+      // Search the JIT for the __anon_expr symbol.
+      auto ExprSymbol = TheJIT->findSymbol("__anon_expr");
+      assert(ExprSymbol && "Function not found");
+
+      // Get the symbol's address and cast it to the right type (takes no
+      // arguments, returns a double) so we can call it as a native function.
+      double (*FP)() =
+          (double (*)())(intptr_t)cantFail(ExprSymbol.getAddress());
+      fprintf(stderr, "Evaluated to %f\n", FP());
+
+      // Delete the anonymous expression module from the JIT.
+      TheJIT->removeModule(H);
     }
+ /*   if (auto *FnIR = FnAST->codegen()) {
+      fprintf(stderr, "Read top-level expression:");
+      FnIR->print(errs());
+      fprintf(stderr, "\n");
+    }*/
   } else {
     // Skip token for error recovery.
     getNextToken();
@@ -990,6 +1070,10 @@ static void MainLoop() {
 //===----------------------------------------------------------------------===//
 
 int main() {
+  InitializeNativeTarget();
+  InitializeNativeTargetAsmPrinter();
+  InitializeNativeTargetAsmParser();
+
   // Install standard binary operators.
   // 1 is lowest precedence.
   BinopPrecedence['<'] = 10;
@@ -1000,7 +1084,8 @@ int main() {
 
   // Make the module, which holds all the code.
   TheModule = llvm::make_unique<Module>("my cool jit", TheContext);
-
+  TheJIT = llvm::make_unique<KaleidoscopeJIT>();
+  InitializeModuleAndPassManager();
   // Run the main "interpreter loop" now.
   MainLoop();
 
