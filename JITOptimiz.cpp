@@ -917,7 +917,60 @@ Value *IfExprAST::codegen() {
   return PN;
 }
 // TODO  语句
-Value *WhileExprAST::codegen() { return nullptr; }
+Value *WhileExprAST::codegen() { 
+  Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  CondV = Builder.CreateFCmpONE(
+      CondV, ConstantFP::get(TheContext, APFloat(0.0)), "whilecond");
+
+  Function *TheFunction = Builder.GetInsertBlock()->getParent();
+
+  // Create blocks for the then and else cases.  Insert the 'then' block at the
+  // end of the function.
+  BasicBlock *WhileBB = BasicBlock::Create(TheContext, "while", TheFunction);
+  Builder.SetInsertPoint(WhileBB);
+
+  BasicBlock *DoBB = BasicBlock::Create(TheContext, "do", TheFunction);
+  BasicBlock *DoneBB = BasicBlock::Create(TheContext, "done");
+  BasicBlock *EntryBB = BasicBlock::Create(TheContext, "entry");
+
+  Builder.CreateCondBr(CondV, DoBB, DoneBB);
+
+  // Emit then value.
+  Builder.SetInsertPoint(DoBB);
+
+  Value *DoV = DO->codegen();
+  if (!DoV)
+    return nullptr;
+
+  Builder.CreateBr(WhileBB);
+  // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
+  DoBB = Builder.GetInsertBlock();
+
+  // Emit else block.
+  TheFunction->getBasicBlockList().push_back(DoneBB);
+  Builder.SetInsertPoint(DoneBB);
+
+  /*Value *ElseV = Else->codegen();
+  if (!ElseV)
+    return nullptr;*/
+
+  Builder.CreateBr(EntryBB);
+  // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
+  DoneBB = Builder.GetInsertBlock();
+
+  // Emit merge block.
+  TheFunction->getBasicBlockList().push_back(EntryBB);
+  Builder.SetInsertPoint(EntryBB);
+  PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 1, "whiletmp");
+
+  PN->addIncoming(DoV, DoBB);
+  // PN->addIncoming(ElseV, ElseBB);
+  return PN;
+}
 //待完善  语句
 Value *PrintExprAST::codegen() {
   // Look up the name in the global module table.
