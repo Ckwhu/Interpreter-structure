@@ -84,32 +84,32 @@ static int gettok() {
 
   if (isalpha(LastChar)) { // identifier: [a-zA-Z][a-zA-Z0-9]*
     IdentifierStr = LastChar;
-    while (isalnum((LastChar = getchar())))
+    while (isalnum((LastChar = getchar()))) {
       IdentifierStr += LastChar;
-
-    if (IdentifierStr == "FUNC")
+    }
+    if (IdentifierStr == "FUNC" || IdentifierStr == "func")
       return tok_FUNC;
-    if (IdentifierStr == "PRINT")
+    if (IdentifierStr == "PRINT" || IdentifierStr == "print")
       return tok_PRINT;
-    if (IdentifierStr == "RETURN")
+    if (IdentifierStr == "RETURN" || IdentifierStr == "return")
       return tok_RETURN;
-    if (IdentifierStr == "CONTINUE")
+    if (IdentifierStr == "CONTINUE" || IdentifierStr == "continue")
       return tok_CONTINUE;
-    if (IdentifierStr == "IF")
+    if (IdentifierStr == "IF" || IdentifierStr == "if")
       return tok_IF;
-    if (IdentifierStr == "THEN")
+    if (IdentifierStr == "THEN" || IdentifierStr == "then")
       return tok_THEN;
-    if (IdentifierStr == "ELSE")
+    if (IdentifierStr == "ELSE" || IdentifierStr == "else")
       return tok_ELSE;
-    if (IdentifierStr == "FI")
+    if (IdentifierStr == "FI" || IdentifierStr == "fi")
       return tok_FI;
-    if (IdentifierStr == "WHILE")
+    if (IdentifierStr == "WHILE" || IdentifierStr == "while")
       return tok_WHILE;
-    if (IdentifierStr == "DO")
+    if (IdentifierStr == "DO" || IdentifierStr == "do")
       return tok_DO;
-    if (IdentifierStr == "DONE")
+    if (IdentifierStr == "DONE" || IdentifierStr == "done")
       return tok_DONE;
-    if (IdentifierStr == "VAR")
+    if (IdentifierStr == "VAR" || IdentifierStr == "var")
       return tok_VAR;
     return tok_VARIABLE;
   }
@@ -160,6 +160,16 @@ public:
   virtual Value *codegen() = 0;
 };
 
+// StatementExprAST - Expression class for Statement
+class StatementExprAST : public ExprAST {
+  std::vector<std::unique_ptr<ExprAST>> States;
+
+public:
+  StatementExprAST(std::vector<std::unique_ptr<ExprAST>> States)
+      : States(std::move(States)) {}
+  Value *codegen();
+};
+
 /// NumberExprAST - Expression class for numeric literals like "1.0".
 class NumberExprAST : public ExprAST {
   double Val;
@@ -191,26 +201,27 @@ public:
 /// VarExprAST - Expression class for var/in
 class VarExprAST : public ExprAST {
   std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
-  //std::unique_ptr<exprast> body;
+  // std::unique_ptr<exprast> body;
 
 public:
   VarExprAST(
       std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
       std::unique_ptr<ExprAST> Body)
-      : VarNames(std::move(VarNames)){}
+      : VarNames(std::move(VarNames)) {}
   Value *codegen();
 };
 
 /// AssignVariableExprAST statement expression class for referencing assignment
 /// ,like a:=100
-// class AssignVariableExprAST : public ExprAST {
-//  std::string Name;
-//  ExprAST *expr;
-//
-//  public:
-//  AssignVariableExprAST(const std::string &Name, ExprAST
-//  *expr):Name(Name),expr(expr){};
-//};
+class AssignExprAST : public ExprAST {
+  std::string name;
+  std::unique_ptr<ExprAST> expr;
+
+public:
+  AssignExprAST(const std::string name, std::unique_ptr<ExprAST> expr)
+      : name(std::move(name)), expr(std::move(expr)){};
+  Value *codegen();
+};
 
 /// BinaryExprAST - Expression class for a binary operator.
 class BinaryExprAST : public ExprAST {
@@ -259,12 +270,12 @@ public:
 
 /// PrintExprAST
 class PrintExprAST : public ExprAST {
-	std::vector<std::unique_ptr<ExprAST>> Args;
+  std::vector<std::unique_ptr<ExprAST>> Args;
 
 public:
-	PrintExprAST(std::vector<std::unique_ptr<ExprAST>> returnConts)
+  PrintExprAST(std::vector<std::unique_ptr<ExprAST>> returnConts)
       : Args(std::move(returnConts)) {}
-    Value *codegen();
+  Value *codegen();
 };
 
 /// ReturnExprAST
@@ -353,7 +364,6 @@ std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
 
 static std::unique_ptr<ExprAST> ParseExpression();
 
-
 /// numberexpr ::= number
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
   auto Result = llvm::make_unique<NumberExprAST>(NumVal);
@@ -388,9 +398,10 @@ static std::unique_ptr<ExprAST> ParseVarExpr() {
       getNextToken(); // eat the ':='.
 
       Init = ParseExpression();
-      if (!Init)
-        return nullptr;
-    }
+      if (!Init) {
+        std::cout << "Expression Excepted" << std::endl;
+      }
+    } 
 
     VarNames.push_back(std::make_pair(Name, std::move(Init)));
 
@@ -411,8 +422,8 @@ static std::unique_ptr<ExprAST> ParseVarExpr() {
   /*auto Body = ParseExpression();
   if (!Body)
     return nullptr;*/
-  std::cout << "解析到变量定义表达式";
-  return llvm::make_unique<VarExprAST>(std::move(VarNames),nullptr);
+  std::cout << "解析到变量定义表达式" << std::endl;
+  return llvm::make_unique<VarExprAST>(std::move(VarNames), nullptr);
 }
 
 /// parenexpr ::= '(' expression ')'
@@ -437,18 +448,19 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   getNextToken(); // eat identifier.
 
   // Parse assignment_statement	: VARIABLE ASSIGN_SYMBOL expression
-  // if (CurTok == tok_ASSIGN_SYMBOL) {
-  //  getNextToken(); // eat  tok_ASSIGN_SYMBOL
-  //  return llvm::make_unique<AssignVariableExprAST>(IdName,ParseExpression());
-  //}
+  if (CurTok == tok_ASSIGN_SYMBOL) {
+    getNextToken(); // eat  tok_ASSIGN_SYMBOL
+    auto expr = ParseExpression();
+    if (!expr)
+      return LogError("Expression excepted");
+    std::cout << "解析到赋值语句" << std::endl;
+    return llvm::make_unique<AssignExprAST>(std::move(IdName), std::move(expr));
+  }
 
   if (CurTok != '(') // Simple variable ref.
   {
     std::cout << "解析到变量" << IdName << "\n";
-    std::unique_ptr<VariableExprAST> varPtr =
-        llvm::make_unique<VariableExprAST>(IdName);
-    NamedValues[IdName] = NumberExprAST(0.0).codegen();
-    return varPtr;
+    return llvm::make_unique<VariableExprAST>(IdName);
   }
 
   // Call.
@@ -470,12 +482,12 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
     }
   }
 
-  /* std::cout << "解析到函数调用,调用函数为：" << IdName << "参数为：";
-   for (int j = 0; j < Args.size(); j++) {
-     std::cout << Args[j] << " ";
-   }
-   std::cout << "\n";
- */
+  std::cout << "解析到函数调用,调用函数为：" << IdName << "参数为：";
+  for (int j = 0; j < Args.size(); j++) {
+    std::cout << Args[j] << ",";
+  }
+  std::cout << std::endl;
+
   // Eat the ')'.
   getNextToken();
 
@@ -514,10 +526,11 @@ static std::unique_ptr<ExprAST> ParseIfExpr() {
   if (!Else)
     return nullptr;
 
-  if (CurTok == tok_FI)
+  if (CurTok == tok_FI) {
+    getNextToken();
     return llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
                                         std::move(Else));
-  else
+  } else
     return LogError("expected fi");
 }
 
@@ -553,13 +566,9 @@ static std::unique_ptr<ExprAST> ParsePrintExpr() {
 
 /// return_statement: RETURN expression
 static std::unique_ptr<ExprAST> ParseReturnExpr() {
-  getNextToken(); // eat print
-  std::vector<std::unique_ptr<ExprAST>> returnConts;
-  while (CurTok != ',') {
-    auto returnCont = ParseExpression();
-    returnConts.push_back(std::move(returnCont));
-  }
-  return nullptr; // llvm::make_unique<ReturnExprAST>(std::move(returnConts),nullptr);
+  getNextToken(); // eat return
+  auto returnCont = ParseExpression();
+  return llvm::make_unique<ReturnExprAST>(std::move(returnCont));
 }
 
 /// primary
@@ -642,7 +651,15 @@ static std::unique_ptr<ExprAST> ParseExpression() {
 }
 
 /// statement
-static std::unique_ptr<ExprAST> ParseStatement() {}
+static std::unique_ptr<ExprAST> ParseStatement() {
+  std::vector<std::unique_ptr<ExprAST>> states;
+  do {
+    auto E = ParseExpression();
+    states.push_back(std::move(E));
+  } while (CurTok != '}');
+  getNextToken(); // eat '}'
+  return llvm::make_unique<StatementExprAST>(std::move(states));
+}
 
 /// prototype
 ///   ::= id '(' id* ')'
@@ -678,7 +695,7 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
   std::cout << "parameter list is:";
   for (unsigned i = 0; i < ArgNames.size(); i++)
     std::cout << ArgNames[i] << " ";
-  std::cout << std:: endl;
+  std::cout << std::endl;
 
   return llvm::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
 }
@@ -690,9 +707,8 @@ static std::unique_ptr<FunctionAST> ParseDefinition() {
   if (!Proto)
     return nullptr;
   getNextToken(); // eat'{'.
-  if (auto E = ParseExpression()) {
-    getNextToken();
-	return llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+  if (auto E = ParseStatement()) {
+    return llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E));
   }
   return nullptr;
 }
@@ -718,10 +734,24 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 // Code Generation
 //===----------------------------------------------------------------------===//
 
-
 Value *LogErrorV(const char *Str) {
   LogError(Str);
   return nullptr;
+}
+
+Value *StatementExprAST::codegen() {
+  if (States.size() == 0)
+    return nullptr;
+  Function *TheFunction = Builder.GetInsertBlock()->getParent();
+  for (unsigned i = 0; i < States.size(); i++) {
+    if (Value *RetVal = States[i]->codegen()) {
+      /*BasicBlock *stateBB =
+          BasicBlock::Create(TheContext, "statement", TheFunction);
+      Builder.SetInsertPoint(stateBB);*/
+    }
+  }
+  Builder.CreateRetVoid();
+  return ConstantFP::get(TheContext, APFloat(0.0));
 }
 
 Value *NumberExprAST::codegen() {
@@ -732,21 +762,34 @@ Value *VariableExprAST::codegen() {
   // Look this variable up in the function.
   Value *V = NamedValues[Name];
   if (!V)
-    return LogErrorV("Unknown variable name");
+    return LogErrorV("Undefined variable name");
   return V;
 }
-//TODO
-Value *TextExprAST::codegen() { 
-	return nullptr;
+// TODO
+Value *TextExprAST::codegen() { return nullptr; }
+// TODO  语句
+Value *VarExprAST::codegen() {
+  if (VarNames.size() == 0)
+    return nullptr;
+  for (unsigned i = 0; i < VarNames.size(); i++) {
+    if (!VarNames[i].second)
+      NamedValues[VarNames[i].first] =
+          ConstantFP::get(TheContext, APFloat(0.0));
+    else
+      NamedValues[VarNames[i].first] = std::move(VarNames[i].second->codegen());
+    //Builder.CreateAlloca(Type::getDoubleTy(TheContext),NamedValues[VarNames[i].first]);
+  }
+  return ConstantFP::get(TheContext, APFloat(0.0));
 }
-//TODO
-Value *VarExprAST::codegen() { 
-	for (unsigned i = 0; i < VarNames.size(); i++)
-		VarNames[i].second->codegen();
-	Value *V = NamedValues["1"];
-	if (!V)
-		return LogErrorV("Unknown variable name");
-	return V;
+
+// TODO
+Value *AssignExprAST::codegen() {
+  Value *V = NamedValues[name];
+  if (!V)
+    return LogErrorV("Undefined variable name");
+  V = expr->codegen();
+  NamedValues[name] = V;
+  return V;
 }
 
 Value *BinaryExprAST::codegen() {
@@ -772,7 +815,7 @@ Value *BinaryExprAST::codegen() {
     return LogErrorV("invalid binary operator");
   }
 }
-
+//语句
 Value *CallExprAST::codegen() {
   // Look up the name in the global module table.
   Function *CalleeF = TheModule->getFunction(Callee);
@@ -791,83 +834,83 @@ Value *CallExprAST::codegen() {
   }
   return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
 }
-//待完善
-Value *IfExprAST::codegen() { 
-	Value *CondV = Cond->codegen();
-	if (!CondV)
-	return nullptr;
+//待完善  语句
+Value *IfExprAST::codegen() {
+  Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
 
-	// Convert condition to a bool by comparing non-equal to 0.0.
-	CondV = Builder.CreateFCmpONE(
-		CondV, ConstantFP::get(TheContext, APFloat(0.0)), "ifcond");
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  CondV = Builder.CreateFCmpONE(
+      CondV, ConstantFP::get(TheContext, APFloat(0.0)), "ifcond");
 
-	Function *TheFunction = Builder.GetInsertBlock()->getParent();
+  Function *TheFunction = Builder.GetInsertBlock()->getParent();
 
-	// Create blocks for the then and else cases.  Insert the 'then' block at the
-	// end of the function.
-	BasicBlock *ThenBB = BasicBlock::Create(TheContext, "then", TheFunction);
-	BasicBlock *ElseBB = BasicBlock::Create(TheContext, "else");
-	BasicBlock *MergeBB = BasicBlock::Create(TheContext, "ifcont");
+  // Create blocks for the then and else cases.  Insert the 'then' block at the
+  // end of the function.
+  BasicBlock *ThenBB = BasicBlock::Create(TheContext, "then", TheFunction);
+  BasicBlock *ElseBB = BasicBlock::Create(TheContext, "else");
+  BasicBlock *MergeBB = BasicBlock::Create(TheContext, "ifcont");
 
-	Builder.CreateCondBr(CondV, ThenBB, ElseBB);
+  Builder.CreateCondBr(CondV, ThenBB, ElseBB);
 
-	// Emit then value.
-	Builder.SetInsertPoint(ThenBB);
+  // Emit then value.
+  Builder.SetInsertPoint(ThenBB);
 
-	Value *ThenV = Then->codegen();
-	if (!ThenV)
-	return nullptr;
+  Value *ThenV = Then->codegen();
+  if (!ThenV)
+    return nullptr;
 
-	Builder.CreateBr(MergeBB);
-	// Codegen of 'Then' can change the current block, update ThenBB for the PHI.
-	ThenBB = Builder.GetInsertBlock();
+  Builder.CreateBr(MergeBB);
+  // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
+  ThenBB = Builder.GetInsertBlock();
 
-	// Emit else block.
-	TheFunction->getBasicBlockList().push_back(ElseBB);
-	Builder.SetInsertPoint(ElseBB);
+  // Emit else block.
+  TheFunction->getBasicBlockList().push_back(ElseBB);
+  Builder.SetInsertPoint(ElseBB);
 
-	Value *ElseV = Else->codegen();
-	if (!ElseV)
-	return nullptr;
+  Value *ElseV = Else->codegen();
+  if (!ElseV)
+    return nullptr;
 
-	Builder.CreateBr(MergeBB);
-	// Codegen of 'Else' can change the current block, update ElseBB for the PHI.
-	ElseBB = Builder.GetInsertBlock();
+  Builder.CreateBr(MergeBB);
+  // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
+  ElseBB = Builder.GetInsertBlock();
 
-	// Emit merge block.
-	TheFunction->getBasicBlockList().push_back(MergeBB);
-	Builder.SetInsertPoint(MergeBB);
-	PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
+  // Emit merge block.
+  TheFunction->getBasicBlockList().push_back(MergeBB);
+  Builder.SetInsertPoint(MergeBB);
+  PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
 
-	PN->addIncoming(ThenV, ThenBB);
-	PN->addIncoming(ElseV, ElseBB);
-	return PN;
+  PN->addIncoming(ThenV, ThenBB);
+  PN->addIncoming(ElseV, ElseBB);
+  return PN;
 }
-//TODO
+// TODO  语句
 Value *WhileExprAST::codegen() { return nullptr; }
-//待完善
-Value *PrintExprAST::codegen() { 
-	 // Look up the name in the global module table.
-	Function *CalleeF = TheModule->getFunction("PRINT");
-	if (!CalleeF)
-	return LogErrorV("Unknown function referenced on [PRINT]");
+//待完善  语句
+Value *PrintExprAST::codegen() {
+  // Look up the name in the global module table.
+  Function *CalleeF = TheModule->getFunction("PRINT");
+  if (!CalleeF)
+    return LogErrorV("Unknown function referenced on [PRINT]");
 
-	// If argument mismatch error.
-	if (CalleeF->arg_size() != Args.size())
-	return LogErrorV("Incorrect # arguments passed");
+  // If argument mismatch error.
+  if (CalleeF->arg_size() != Args.size())
+    return LogErrorV("Incorrect # arguments passed");
 
-	std::vector<Value *> ArgsV;
-	for (unsigned i = 0, e = Args.size(); i != e; ++i) {
-		ArgsV.push_back(Args[i]->codegen());
-		if (!ArgsV.back())
-			return nullptr;
-	}
-	return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
+  std::vector<Value *> ArgsV;
+  for (unsigned i = 0, e = Args.size(); i != e; ++i) {
+    ArgsV.push_back(Args[i]->codegen());
+    if (!ArgsV.back())
+      return nullptr;
+  }
+  return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
 }
-//TODO
+// TODO
 Value *ReturnExprAST::codegen() {
-	returnCont->codegen();
-	return nullptr;
+  Builder.CreateRet(returnCont->codegen());
+  return nullptr;
 }
 
 Function *PrototypeAST::codegen() {
@@ -902,13 +945,13 @@ Function *FunctionAST::codegen() {
   Builder.SetInsertPoint(BB);
 
   // Record the function arguments in the NamedValues map.
-  //NamedValues.clear();
+  // NamedValues.clear();
   for (auto &Arg : TheFunction->args())
     NamedValues[Arg.getName()] = &Arg;
 
   if (Value *RetVal = Body->codegen()) {
     // Finish off the function.
-    Builder.CreateRet(RetVal);
+    /* Builder.CreateRet(RetVal);*/
 
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
@@ -927,6 +970,7 @@ Function *FunctionAST::codegen() {
 
 static void HandleDefinition() {
   if (auto FnAST = ParseDefinition()) {
+    std::cout << "\n\n\n******中间代码生成******\n\n" << std::endl;
     if (auto *FnIR = FnAST->codegen()) {
       fprintf(stderr, "Read function definition:");
       FnIR->print(errs());
@@ -979,9 +1023,9 @@ static void MainLoop() {
     case tok_FUNC:
       HandleDefinition();
       break;
-   /* case tok_extern:
-      handleextern();
-      break;*/
+      /* case tok_extern:
+         handleextern();
+         break;*/
     default:
       HandleTopLevelExpression();
       break;
