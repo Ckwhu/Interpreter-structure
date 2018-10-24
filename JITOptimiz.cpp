@@ -568,7 +568,7 @@ static std::unique_ptr<ExprAST> ParseWhileExpr() {
 
   if (CurTok != tok_DONE)
     return LogError("expected DONE");
-
+  getNextToken();
   return llvm::make_unique<WhileExprAST>(std::move(Cond), std::move(Do));
 }
 
@@ -1037,13 +1037,13 @@ Function *FunctionAST::codegen() {
 
   if (Value *RetVal = Body->codegen()) {
     // Finish off the function.
-    Builder.CreateRet(RetVal);
+    //Builder.CreateRet(RetVal);
 
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
 
     // Optimize the function.
-    TheFPM->run(*TheFunction);
+    //TheFPM->run(*TheFunction);	
     return TheFunction;
   }
 
