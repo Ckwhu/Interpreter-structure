@@ -378,6 +378,7 @@ std::unique_ptr<PrototypeAST> LogErrorP(const char *Str) {
 }
 
 static std::unique_ptr<ExprAST> ParseExpression();
+static std::unique_ptr<ExprAST> ParseStatement();
 
 /// numberexpr ::= number
 static std::unique_ptr<ExprAST> ParseNumberExpr() {
@@ -522,24 +523,43 @@ static std::unique_ptr<ExprAST> ParseIfExpr() {
     return LogError("expected then");
   getNextToken(); // eat the then
 
-  auto Then = ParseExpression();
-  if (!Then)
-    return nullptr;
+  std::unique_ptr<ExprAST> Then;//define then
+
+  if (CurTok!='{'){
+    Then = ParseExpression();
+    if (!Then)
+      return nullptr;
+  }
+  else {
+    getNextToken(); // eat '{'
+    Then = ParseStatement();
+    if (!Then)
+      return nullptr;
+  }
 
   if ((CurTok != tok_ELSE) && (CurTok != tok_FI))
     return LogError("expected else or fi");
 
   if (CurTok == tok_FI) {
-    getNextToken();
+    getNextToken();//eat fi
     return llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
                                         std::move(nullptr));
   }
 
-  getNextToken();
+  getNextToken();//eat else
 
-  auto Else = ParseExpression();
-  if (!Else)
-    return nullptr;
+   std::unique_ptr<ExprAST> Else; // define then
+
+  if (CurTok != '{') {
+     Else = ParseExpression();
+    if (!Else)
+      return nullptr;
+  } else {
+    getNextToken(); // eat '{'
+    Else = ParseStatement();
+    if (!Else)
+      return nullptr;
+  }
 
   if (CurTok == tok_FI) {
     getNextToken();
@@ -780,6 +800,7 @@ Value *StatementExprAST::codegen() {
       Builder.SetInsertPoint(stateBB);*/
     }
   }
+  //Builder.CreateRetVoid();
   return ConstantFP::get(TheContext, APFloat(0.0));
 }
 
@@ -898,11 +919,11 @@ Value *IfExprAST::codegen() {
   TheFunction->getBasicBlockList().push_back(ElseBB);
   Builder.SetInsertPoint(ElseBB);
 
-  Value *ElseV=NULL;
-  if(Else){
-	ElseV= Else->codegen();
-	if (!ElseV)
-		return nullptr;
+  Value *ElseV = NULL;
+  if (Else) {
+    ElseV = Else->codegen();
+    if (!ElseV)
+      return nullptr;
   }
 
   Builder.CreateBr(MergeBB);
@@ -915,7 +936,7 @@ Value *IfExprAST::codegen() {
   PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
 
   PN->addIncoming(ThenV, ThenBB);
-  if(ElseV) PN->addIncoming(ElseV, ElseBB);
+  PN->addIncoming(ElseV, ElseBB);
   return PN;
 }
 // TODO  语句
@@ -1046,6 +1067,8 @@ Function *FunctionAST::codegen() {
 
     // Optimize the function.
     // TheFPM->run(*TheFunction);
+
+	TheFunction->viewCFG();
     return TheFunction;
   }
 
