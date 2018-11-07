@@ -780,7 +780,6 @@ Value *StatementExprAST::codegen() {
       Builder.SetInsertPoint(stateBB);*/
     }
   }
-  Builder.CreateRetVoid();
   return ConstantFP::get(TheContext, APFloat(0.0));
 }
 
@@ -899,9 +898,12 @@ Value *IfExprAST::codegen() {
   TheFunction->getBasicBlockList().push_back(ElseBB);
   Builder.SetInsertPoint(ElseBB);
 
-  Value *ElseV = Else->codegen();
-  if (!ElseV)
-    return nullptr;
+  Value *ElseV=NULL;
+  if(Else){
+	ElseV= Else->codegen();
+	if (!ElseV)
+		return nullptr;
+  }
 
   Builder.CreateBr(MergeBB);
   // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
@@ -913,11 +915,11 @@ Value *IfExprAST::codegen() {
   PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
 
   PN->addIncoming(ThenV, ThenBB);
-  PN->addIncoming(ElseV, ElseBB);
+  if(ElseV) PN->addIncoming(ElseV, ElseBB);
   return PN;
 }
 // TODO  语句
-Value *WhileExprAST::codegen() { 
+Value *WhileExprAST::codegen() {
   Value *CondV = Cond->codegen();
   if (!CondV)
     return nullptr;
@@ -1037,13 +1039,13 @@ Function *FunctionAST::codegen() {
 
   if (Value *RetVal = Body->codegen()) {
     // Finish off the function.
-    //Builder.CreateRet(RetVal);
+    // Builder.CreateRet(RetVal);
 
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
 
     // Optimize the function.
-    //TheFPM->run(*TheFunction);	
+    // TheFPM->run(*TheFunction);
     return TheFunction;
   }
 
