@@ -17,6 +17,7 @@
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Utils.h"
 #include <algorithm>
 #include <cassert>
 #include <cctype>
@@ -27,6 +28,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -347,7 +349,8 @@ static std::map<char, int> BinopPrecedence;
 static LLVMContext TheContext;
 static IRBuilder<> Builder(TheContext);
 static std::unique_ptr<Module> TheModule;
-static std::map<std::string, Value *> NamedValues;
+//static std::map<std::string, Value *> NamedValues;
+static std::map<std::string, AllocaInst*> NamedValues;
 static std::unique_ptr<legacy::FunctionPassManager> TheFPM;
 static std::unique_ptr<KaleidoscopeJIT>
     TheJIT; //这个地方要改，改成我们编译的语言！！！
@@ -499,7 +502,7 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   }
 
   std::cout << "解析到函数调用,调用函数为：" << IdName << "参数为：";
-  for (int j = 0; j < Args.size(); j++) {
+  for (size_t j = 0; j < Args.size(); j++) {
     std::cout << Args[j] << ",";
   }
   std::cout << std::endl;
@@ -523,43 +526,38 @@ static std::unique_ptr<ExprAST> ParseIfExpr() {
     return LogError("expected then");
   getNextToken(); // eat the then
 
-  std::unique_ptr<ExprAST> Then;//define then
+  std::unique_ptr<ExprAST> Then; // define then
 
-  if (CurTok!='{'){
+  if (CurTok != '{') {
     Then = ParseExpression();
-    if (!Then)
-      return nullptr;
-  }
-  else {
+  } else {
     getNextToken(); // eat '{'
     Then = ParseStatement();
-    if (!Then)
-      return nullptr;
   }
+  if (!Then)
+    return nullptr;
 
   if ((CurTok != tok_ELSE) && (CurTok != tok_FI))
     return LogError("expected else or fi");
 
   if (CurTok == tok_FI) {
-    getNextToken();//eat fi
+    getNextToken(); // eat fi
     return llvm::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
                                         std::move(nullptr));
   }
 
-  getNextToken();//eat else
+  getNextToken(); // eat else
 
-   std::unique_ptr<ExprAST> Else; // define then
+  std::unique_ptr<ExprAST> Else; // define then
 
   if (CurTok != '{') {
-     Else = ParseExpression();
-    if (!Else)
-      return nullptr;
+    Else = ParseExpression();
   } else {
     getNextToken(); // eat '{'
     Else = ParseStatement();
-    if (!Else)
-      return nullptr;
   }
+  if (!Else)
+    return nullptr;
 
   if (CurTok == tok_FI) {
     getNextToken();
@@ -582,7 +580,14 @@ static std::unique_ptr<ExprAST> ParseWhileExpr() {
     return LogError("expected DO");
   getNextToken(); // eat the DO
 
-  auto Do = ParseExpression();
+  std::unique_ptr<ExprAST> Do = nullptr; 
+
+  if (CurTok != '{') {
+    Do = ParseExpression();
+  } else{
+    getNextToken();
+    Do = ParseStatement();
+  }
   if (!Do)
     return nullptr;
 
@@ -595,8 +600,24 @@ static std::unique_ptr<ExprAST> ParseWhileExpr() {
 /// print_item	: expression| TEXT
 static std::unique_ptr<ExprAST> ParsePrintExpr() {
   getNextToken(); // eat print
-  auto printCont = ParseExpression();
-  return nullptr; // llvm::make_unique<PrintExprAST>(std::move(printCont));
+  std::vector<std::unique_ptr<ExprAST>> Args;
+  std::string str = "";
+  Args.push_back(nullptr);
+  do {
+    switch (CurTok) {
+    case tok_TEXT:
+      str += StrVal;
+      getNextToken();    //手动读取到下一个符号
+      break;
+    case tok_INTEGER:
+    case tok_VARIABLE:
+      Args.push_back(std::move(ParseExpression())); 
+      str += "%lf";
+      break;
+    }
+  } while (CurTok == ','?getNextToken(),true:false);
+  Args[0] = llvm::make_unique<TextExprAST>(str);
+  return llvm::make_unique<PrintExprAST>(std::move(Args));
 };
 
 /// return_statement: RETURN expression
@@ -768,6 +789,13 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 //===----------------------------------------------------------------------===//
 // Code Generation
 //===----------------------------------------------------------------------===//
+//辅助函数  分配内存
+static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
+                                          const std::string &VarName) {
+  IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
+                   TheFunction->getEntryBlock().begin());
+  return TmpB.CreateAlloca(Type::getDoubleTy(TheContext), 0, VarName.c_str());
+}
 
 Value *LogErrorV(const char *Str) {
   LogError(Str);
@@ -800,7 +828,7 @@ Value *StatementExprAST::codegen() {
       Builder.SetInsertPoint(stateBB);*/
     }
   }
-  //Builder.CreateRetVoid();
+  // Builder.CreateRetVoid();
   return ConstantFP::get(TheContext, APFloat(0.0));
 }
 
@@ -813,23 +841,29 @@ Value *VariableExprAST::codegen() {
   Value *V = NamedValues[Name];
   if (!V)
     return LogErrorV("Undefined variable name");
-  return V;
+  return Builder.CreateLoad(V, Name.c_str());
+  //return V;
 }
 // TODO
 Value *TextExprAST::codegen() { return nullptr; }
-// TODO  语句
+// TODO  语句   已在堆栈上分配内存，已测试，暂无问题
 Value *VarExprAST::codegen() {
   if (VarNames.size() == 0)
     return nullptr;
   for (unsigned i = 0; i < VarNames.size(); i++) {
-    if (!VarNames[i].second)
-      NamedValues[VarNames[i].first] =
-          ConstantFP::get(TheContext, APFloat(0.0));
-    else
-      NamedValues[VarNames[i].first] = std::move(VarNames[i].second->codegen());
-    // Builder.CreateAlloca(Type::getDoubleTy(TheContext),NamedValues[VarNames[i].first]);
+    NamedValues[VarNames[i].first] = CreateEntryBlockAlloca(
+        Builder.GetInsertBlock()->getParent(), VarNames[i].first);
+    if (!VarNames[i].second) {    //默认值为零
+      Builder.CreateStore(NumberExprAST(0.0).codegen(),
+                          NamedValues[VarNames[i].first]);
+      // ConstantFP::get(TheContext, APFloat(0.0));
+    } else {
+      Builder.CreateStore(VarNames[i].second->codegen(),
+                          NamedValues[VarNames[i].first]);
+      // Builder.CreateAlloca(Type::getDoubleTy(TheContext),NamedValues[VarNames[i].first]);
+    }
   }
-  return ConstantFP::get(TheContext, APFloat(0.0));
+  return Constant::getNullValue(Type::getDoubleTy(TheContext));
 }
 
 // TODO
@@ -837,9 +871,10 @@ Value *AssignExprAST::codegen() {
   Value *V = NamedValues[name];
   if (!V)
     return LogErrorV("Undefined variable name");
-  V = expr->codegen();
-  NamedValues[name] = V;
-  return V;
+  /*V = expr->codegen();
+  NamedValues[name] = V;*/
+  return Builder.CreateStore(expr->codegen(),NamedValues[name]);
+  //return V;
 }
 
 Value *BinaryExprAST::codegen() {
@@ -933,28 +968,28 @@ Value *IfExprAST::codegen() {
   // Emit merge block.
   TheFunction->getBasicBlockList().push_back(MergeBB);
   Builder.SetInsertPoint(MergeBB);
-  PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
+  //PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
 
-  PN->addIncoming(ThenV, ThenBB);
-  PN->addIncoming(ElseV, ElseBB);
-  return PN;
+  /*PN->addIncoming(ThenV, ThenBB);
+  if (ElseV)
+    PN->addIncoming(ElseV, ElseBB);*/
+  return Constant::getNullValue(Type::getDoubleTy(TheContext)); //返回空值
 }
 // TODO  语句
 Value *WhileExprAST::codegen() {
-  Value *CondV = Cond->codegen();
-  if (!CondV)
-    return nullptr;
-
-  // Convert condition to a bool by comparing non-equal to 0.0.
-  CondV = Builder.CreateFCmpONE(
-      CondV, ConstantFP::get(TheContext, APFloat(0.0)), "whilecond");
-
   Function *TheFunction = Builder.GetInsertBlock()->getParent();
 
   // Create blocks for the then and else cases.  Insert the 'then' block at the
   // end of the function.
   BasicBlock *WhileBB = BasicBlock::Create(TheContext, "while", TheFunction);
   Builder.SetInsertPoint(WhileBB);
+
+  Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  CondV = Builder.CreateFCmpONE(
+      CondV, ConstantFP::get(TheContext, APFloat(0.0)), "whilecond");
 
   BasicBlock *DoBB = BasicBlock::Create(TheContext, "do", TheFunction);
   BasicBlock *DoneBB = BasicBlock::Create(TheContext, "done");
@@ -988,18 +1023,18 @@ Value *WhileExprAST::codegen() {
   // Emit merge block.
   TheFunction->getBasicBlockList().push_back(EntryBB);
   Builder.SetInsertPoint(EntryBB);
-  PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 1, "whiletmp");
+  //PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 1, "whiletmp");
 
-  PN->addIncoming(DoV, DoBB);
+  //PN->addIncoming(DoV, DoBB);
   // PN->addIncoming(ElseV, ElseBB);
-  return PN;
+  return Constant::getNullValue(Type::getDoubleTy(TheContext));
 }
 //待完善  语句
 Value *PrintExprAST::codegen() {
   // Look up the name in the global module table.
-  Function *CalleeF = TheModule->getFunction("PRINT");
+  Function *CalleeF = TheModule->getFunction("sin"); ////此位置需更改
   if (!CalleeF)
-    return LogErrorV("Unknown function referenced on [PRINT]");
+    return LogErrorV("Unknown function referenced on [printf]");
 
   // If argument mismatch error.
   if (CalleeF->arg_size() != Args.size())
@@ -1015,8 +1050,7 @@ Value *PrintExprAST::codegen() {
 }
 // TODO
 Value *ReturnExprAST::codegen() {
-  Builder.CreateRet(returnCont->codegen());
-  return nullptr;
+  return Builder.CreateRet(returnCont->codegen());
 }
 
 Function *PrototypeAST::codegen() {
@@ -1052,11 +1086,16 @@ Function *FunctionAST::codegen() {
   // Create a new basic block to start insertion into.
   BasicBlock *BB = BasicBlock::Create(TheContext, "entry", TheFunction);
   Builder.SetInsertPoint(BB);
+  NamedValues.clear();    //*****2018/11/21*****//
 
   // Record the function arguments in the NamedValues map.
   // NamedValues.clear();
-  for (auto &Arg : TheFunction->args())
-    NamedValues[Arg.getName()] = &Arg;
+  for (auto &Arg : TheFunction->args()) {
+    AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Arg.getName());
+    Builder.CreateStore(&Arg, Alloca);
+    NamedValues[Arg.getName()] = Alloca;
+    //NamedValues[Arg.getName()] = &Arg;
+  }
 
   if (Value *RetVal = Body->codegen()) {
     // Finish off the function.
@@ -1068,7 +1107,7 @@ Function *FunctionAST::codegen() {
     // Optimize the function.
     // TheFPM->run(*TheFunction);
 
-	TheFunction->viewCFG();
+    TheFunction->viewCFG();
     return TheFunction;
   }
 
@@ -1090,6 +1129,8 @@ static void InitializeModuleAndPassManager() {
   // Create a new pass manager attached to it.
   TheFPM = llvm::make_unique<legacy::FunctionPassManager>(TheModule.get());
 
+  // Promote allocas to registers.  优化内存分配
+  TheFPM->add(createPromoteMemoryToRegisterPass());
   // Do simple "peephole" optimizations and bit-twiddling optzns.
   TheFPM->add(createInstructionCombiningPass());
   // Reassociate expressions.
@@ -1104,8 +1145,8 @@ static void InitializeModuleAndPassManager() {
 
 static void HandleDefinition() {
   if (auto FnAST = ParseDefinition()) {
-    std::cout << "\n\n\n******中间代码生成******\n\n" << std::endl;
     if (auto *FnIR = FnAST->codegen()) {
+      std::cout << "\n\n\n******中间代码生成******\n\n" << std::endl;
       fprintf(stderr, "Read function definition:");
       FnIR->print(errs());
       fprintf(stderr, "\n");
