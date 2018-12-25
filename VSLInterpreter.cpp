@@ -1,11 +1,12 @@
 #include "../include/KaleidoscopeJIT.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/Passes.h"
-#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -15,27 +16,34 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/Host.h"
+#include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
-//#include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Utils.h"
 #include <algorithm>
 #include <cassert>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 using namespace llvm;
 using namespace llvm::orc;
+using namespace llvm::sys;
 
 //===----------------------------------------------------------------------===//
 // Lexer
@@ -173,7 +181,7 @@ static int gettok() {
     NumVal = strtod(NumStr.c_str(), nullptr);
     return tok_INTEGER;
   }
-  ////×ªÒå×Ö·ûĞèÒªÊµÏÖ
+  ////è½¬ä¹‰å­—ç¬¦éœ€è¦å®ç°
   if (LastChar == '\"') {
     std::string textStr;
     LastChar = advance();
@@ -458,14 +466,14 @@ public:
 /// CurTok/getNextToken - Provide a simple token buffer.  CurTok is the current
 /// token the parser is looking at.  getNextToken reads another token from the
 /// lexer and updates CurTok with its results.
-static int CurTok;
+static int CurTok = ';';
 static int getNextToken() { return CurTok = gettok(); }
 
 /// BinopPrecedence - This holds the precedence for each binary operator that is
 /// defined.
 static std::map<char, int> BinopPrecedence;
 
-//// Code Generation  ±äÁ¿×¼±¸   ////
+//// Code Generation  å˜é‡å‡†å¤‡   ////
 
 static LLVMContext TheContext;
 static IRBuilder<> Builder(TheContext);
@@ -473,11 +481,10 @@ static std::unique_ptr<Module> TheModule;
 // static std::map<std::string, Value *> NamedValues;
 static std::map<std::string, AllocaInst *> NamedValues;
 static std::unique_ptr<legacy::FunctionPassManager> TheFPM;
-static std::unique_ptr<KaleidoscopeJIT>
-    TheJIT; 
+static std::unique_ptr<KaleidoscopeJIT> TheJIT;
 static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
 
-//// Code Generation  ±äÁ¿×¼±¸ END  ////
+//// Code Generation  å˜é‡å‡†å¤‡ END  ////
 
 /// GetTokPrecedence - Get the precedence of the pending binary operator token.
 static int GetTokPrecedence() {
@@ -562,7 +569,7 @@ static std::unique_ptr<ExprAST> ParseVarExpr() {
   /*auto Body = ParseExpression();
   if (!Body)
     return nullptr;*/
-  std::cout << "½âÎöµ½±äÁ¿¶¨Òå±í´ïÊ½" << std::endl;
+  std::cout << "è§£æåˆ°å˜é‡å®šä¹‰è¡¨è¾¾å¼" << std::endl;
   return llvm::make_unique<VarExprAST>(std::move(VarNames), nullptr);
 }
 
@@ -594,13 +601,13 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
     auto expr = ParseExpression();
     if (!expr)
       return LogError("Expression excepted");
-    std::cout << "½âÎöµ½¸³ÖµÓï¾ä" << std::endl;
+    std::cout << "è§£æåˆ°èµ‹å€¼è¯­å¥" << std::endl;
     return llvm::make_unique<AssignExprAST>(std::move(IdName), std::move(expr));
   }
 
   if (CurTok != '(') // Simple variable ref.
   {
-    std::cout << "½âÎöµ½±äÁ¿" << IdName << "\n";
+    std::cout << "è§£æåˆ°å˜é‡" << IdName << "\n";
     return llvm::make_unique<VariableExprAST>(LitLoc, IdName);
   }
 
@@ -623,7 +630,7 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
     }
   }
 
-  std::cout << "½âÎöµ½º¯Êıµ÷ÓÃ,µ÷ÓÃº¯ÊıÎª£º" << IdName << "²ÎÊıÎª£º";
+  std::cout << "è§£æåˆ°å‡½æ•°è°ƒç”¨,è°ƒç”¨å‡½æ•°ä¸ºï¼š" << IdName << "å‚æ•°ä¸ºï¼š";
   for (size_t j = 0; j < Args.size(); j++) {
     std::cout << Args[j] << ",";
   }
@@ -730,7 +737,7 @@ static std::unique_ptr<ExprAST> ParsePrintExpr() {
     switch (CurTok) {
     case tok_TEXT:
       str += StrVal;
-      getNextToken(); //ÊÖ¶¯¶ÁÈ¡µ½ÏÂÒ»¸ö·ûºÅ
+      getNextToken(); //æ‰‹åŠ¨è¯»å–åˆ°ä¸‹ä¸€ä¸ªç¬¦å·
       break;
     case tok_INTEGER:
     case tok_VARIABLE:
@@ -767,7 +774,7 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
   case tok_VAR:
     return ParseVarExpr();
   case tok_CONTINUE:
-    //Õâ¸ö»¹²»ÖªµÀÔõÃ´Ğ´
+    //è¿™ä¸ªè¿˜ä¸çŸ¥é“æ€ä¹ˆå†™
   case tok_IF:
     return ParseIfExpr();
   case tok_WHILE:
@@ -915,7 +922,7 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 // Debug Info Support
 //===----------------------------------------------------------------------===//
 
-static std::unique_ptr<DIBuilder> DBuilder; //Ğ­Öúµ÷ÊÔÔªÊı¾İ
+static std::unique_ptr<DIBuilder> DBuilder; //ååŠ©è°ƒè¯•å…ƒæ•°æ®
 
 DIType *DebugInfo::getDoubleTy() {
   if (DblTy)
@@ -953,7 +960,10 @@ static DISubroutineType *CreateFunctionType(unsigned NumArgs, DIFile *Unit) {
 //===----------------------------------------------------------------------===//
 // Code Generation
 //===----------------------------------------------------------------------===//
-//¸¨Öúº¯Êı  ·ÖÅäÄÚ´æ
+
+bool isreturn = false;
+
+//è¾…åŠ©å‡½æ•°  åˆ†é…å†…å­˜
 static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction,
                                           const std::string &VarName) {
   IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
@@ -1009,15 +1019,15 @@ Value *VariableExprAST::codegen() {
   // return V;
 }
 // TODO
-Value *TextExprAST::codegen() { return nullptr; }
-// TODO  Óï¾ä   ÒÑÔÚ¶ÑÕ»ÉÏ·ÖÅäÄÚ´æ£¬ÒÑ²âÊÔ£¬ÔİÎŞÎÊÌâ
+Value *TextExprAST::codegen() { return Builder.CreateGlobalStringPtr(Str); }
+// TODO  è¯­å¥   å·²åœ¨å †æ ˆä¸Šåˆ†é…å†…å­˜ï¼Œå·²æµ‹è¯•ï¼Œæš‚æ— é—®é¢˜
 Value *VarExprAST::codegen() {
   if (VarNames.size() == 0)
     return nullptr;
   for (unsigned i = 0; i < VarNames.size(); i++) {
     NamedValues[VarNames[i].first] = CreateEntryBlockAlloca(
         Builder.GetInsertBlock()->getParent(), VarNames[i].first);
-    if (!VarNames[i].second) { //Ä¬ÈÏÖµÎªÁã
+    if (!VarNames[i].second) { //é»˜è®¤å€¼ä¸ºé›¶
       Builder.CreateStore(NumberExprAST(0.0).codegen(),
                           NamedValues[VarNames[i].first]);
       // ConstantFP::get(TheContext, APFloat(0.0));
@@ -1064,7 +1074,7 @@ Value *BinaryExprAST::codegen() {
     return LogErrorV("invalid binary operator");
   }
 }
-//Óï¾ä
+//è¯­å¥
 Value *CallExprAST::codegen() {
   // Look up the name in the global module table.
   Function *CalleeF = getFunction(Callee);
@@ -1083,9 +1093,10 @@ Value *CallExprAST::codegen() {
   }
   return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
 }
-//´ıÍêÉÆ  Óï¾ä
+//å¾…å®Œå–„  è¯­å¥
 Value *IfExprAST::codegen() {
   Value *CondV = Cond->codegen();
+  int isReturn = 0;
   if (!CondV)
     return nullptr;
 
@@ -1110,7 +1121,11 @@ Value *IfExprAST::codegen() {
   if (!ThenV)
     return nullptr;
 
-  Builder.CreateBr(MergeBB);
+  if (isreturn) {
+    isreturn = false;
+    isReturn++;
+  } else
+    Builder.CreateBr(MergeBB);
   // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
   ThenBB = Builder.GetInsertBlock();
 
@@ -1125,85 +1140,187 @@ Value *IfExprAST::codegen() {
       return nullptr;
   }
 
-  Builder.CreateBr(MergeBB);
+  if (isreturn) {
+    isreturn = false;
+    isReturn++;
+  } else
+    Builder.CreateBr(MergeBB);
   // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
   ElseBB = Builder.GetInsertBlock();
 
   // Emit merge block.
-  TheFunction->getBasicBlockList().push_back(MergeBB);
-  Builder.SetInsertPoint(MergeBB);
-  // PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
+  if (isReturn != 2) {
+    TheFunction->getBasicBlockList().push_back(MergeBB);
+    Builder.SetInsertPoint(MergeBB);
+    //PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, "iftmp");
 
-  /*PN->addIncoming(ThenV, ThenBB);
-  if (ElseV)
-    PN->addIncoming(ElseV, ElseBB);*/
-  return Constant::getNullValue(Type::getDoubleTy(TheContext)); //·µ»Ø¿ÕÖµ
+    /*PN->addIncoming(ThenV, ThenBB);
+    if (ElseV)
+          PN->addIncoming(ElseV, ElseBB);*/
+  }
+  return Constant::getNullValue(Type::getDoubleTy(TheContext)); //è¿”å›ç©ºå€¼
 }
-// TODO  Óï¾ä
+// TODO  è¯­å¥
 Value *WhileExprAST::codegen() {
+  // Emit the start code first, without 'variable' in scope.
+  /*Value *StartVal = Start->codegen();
+  if (!StartVal)
+    return nullptr;*/
+
+  // Make the new basic block for the loop header, inserting after current
+  // block.
   Function *TheFunction = Builder.GetInsertBlock()->getParent();
+  BasicBlock *PreheaderBB = Builder.GetInsertBlock();
+  BasicBlock *LoopBB = BasicBlock::Create(TheContext, "loop", TheFunction);
 
-  // Create blocks for the then and else cases.  Insert the 'then' block at the
-  // end of the function.
-  BasicBlock *WhileBB = BasicBlock::Create(TheContext, "while", TheFunction);
-  Builder.SetInsertPoint(WhileBB);
+  // Insert an explicit fall through from the current block to the LoopBB.
+  Builder.CreateBr(LoopBB);
 
+  // Start insertion in LoopBB.
+  Builder.SetInsertPoint(LoopBB);
+
+  // Start the PHI node with an entry for Start.
+  /*PHINode *Variable =
+      Builder.CreatePHI(Type::getDoubleTy(TheContext), 2, VarName);
+  Variable->addIncoming(StartVal, PreheaderBB);*/
+
+  // Within the loop, the variable is defined equal to the PHI node.  If it
+  // shadows an existing variable, we have to restore it, so save it now.
+ /* Value *OldVal = NamedValues[VarName];
+  NamedValues[VarName] = Variable;*/
+
+  // Emit the body of the loop.  This, like any other expr, can change the
+  // current BB.  Note that we ignore the value computed by the body, but don't
+  // allow an error.
+  if (!DO->codegen())
+    return nullptr;
+
+  // Emit the step value.
+  //Value *StepVal = nullptr;
+  //if (Step) {
+  //  StepVal = Step->codegen();
+  //  if (!StepVal)
+  //    return nullptr;
+  //} else {
+  //  // If not specified, use 1.0.
+  //  StepVal = ConstantFP::get(TheContext, APFloat(1.0));
+  //}
+
+  //Value *NextVar = Builder.CreateFAdd(Variable, StepVal, "nextvar");
+
+  // Compute the end condition.
   Value *CondV = Cond->codegen();
   if (!CondV)
     return nullptr;
+
   // Convert condition to a bool by comparing non-equal to 0.0.
   CondV = Builder.CreateFCmpONE(
-      CondV, ConstantFP::get(TheContext, APFloat(0.0)), "whilecond");
+      CondV, ConstantFP::get(TheContext, APFloat(0.0)), "loopcond");
 
-  BasicBlock *DoBB = BasicBlock::Create(TheContext, "do", TheFunction);
-  BasicBlock *DoneBB = BasicBlock::Create(TheContext, "done");
-  BasicBlock *EntryBB = BasicBlock::Create(TheContext, "entry");
+  // Create the "after loop" block and insert it.
+  BasicBlock *LoopEndBB = Builder.GetInsertBlock();
+  BasicBlock *AfterBB =
+      BasicBlock::Create(TheContext, "afterloop", TheFunction);
 
-  Builder.CreateCondBr(CondV, DoBB, DoneBB);
+  // Insert the conditional branch into the end of LoopEndBB.
+  Builder.CreateCondBr(CondV, LoopBB, AfterBB);
 
-  // Emit then value.
-  Builder.SetInsertPoint(DoBB);
+  // Any new code will be inserted in AfterBB.
+  Builder.SetInsertPoint(AfterBB);
 
-  Value *DoV = DO->codegen();
-  if (!DoV)
-    return nullptr;
+  // Add a new entry to the PHI node for the backedge.
+  //Variable->addIncoming(NextVar, LoopEndBB);
 
-  Builder.CreateBr(WhileBB);
-  // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
-  DoBB = Builder.GetInsertBlock();
+  //// Restore the unshadowed variable.
+  //if (OldVal)
+  //  NamedValues[VarName] = OldVal;
+  //else
+  //  NamedValues.erase(VarName);
 
-  // Emit else block.
-  TheFunction->getBasicBlockList().push_back(DoneBB);
-  Builder.SetInsertPoint(DoneBB);
+  // for expr always returns 0.0.
+  return Constant::getNullValue(Type::getDoubleTy(TheContext));
 
-  /*Value *ElseV = Else->codegen();
-  if (!ElseV)
-    return nullptr;*/
 
-  Builder.CreateBr(EntryBB);
-  // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
-  DoneBB = Builder.GetInsertBlock();
+  //Function *TheFunction = Builder.GetInsertBlock()->getParent();
+  //int isReturn = 0;
+  //// Create blocks for the then and else cases.  Insert the 'then' block at the
+  //// end of the function.
+  //BasicBlock *WhileBB = BasicBlock::Create(TheContext, "while", TheFunction);
+  //Builder.SetInsertPoint(WhileBB);
 
-  // Emit merge block.
-  TheFunction->getBasicBlockList().push_back(EntryBB);
-  Builder.SetInsertPoint(EntryBB);
-  // PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 1,
-  // "whiletmp");
+  //Value *CondV = Cond->codegen();
+  //if (!CondV)
+  //  return nullptr;
+  //// Convert condition to a bool by comparing non-equal to 0.0.
+  //CondV = Builder.CreateFCmpONE(
+  //    CondV, ConstantFP::get(TheContext, APFloat(0.0)), "whilecond");
 
-  // PN->addIncoming(DoV, DoBB);
-  // PN->addIncoming(ElseV, ElseBB);
+  //BasicBlock *DoBB = BasicBlock::Create(TheContext, "do", TheFunction);
+  //BasicBlock *DoneBB = BasicBlock::Create(TheContext, "done");
+  //BasicBlock *EntryBB = BasicBlock::Create(TheContext, "entry");
+
+  //Builder.CreateCondBr(CondV, DoBB, DoneBB);
+
+  //// Emit then value.
+  //Builder.SetInsertPoint(DoBB);
+
+  //Value *DoV = DO->codegen();
+  //if (!DoV)
+  //  return nullptr;
+
+  //Builder.CreateBr(WhileBB);
+  //// Codegen of 'Then' can change the current block, update ThenBB for the PHI.
+  //DoBB = Builder.GetInsertBlock();
+
+  //// Emit else block.
+  //TheFunction->getBasicBlockList().push_back(DoneBB);
+  //Builder.SetInsertPoint(DoneBB);
+
+  ///*Value *ElseV = Else->codegen();
+  //if (!ElseV)
+  //  return nullptr;*/
+
+  //if(!isreturn) Builder.CreateBr(EntryBB);
+  //// Codegen of 'Else' can change the current block, update ElseBB for the PHI.
+  //DoneBB = Builder.GetInsertBlock();
+
+  //// Emit merge block.
+  //if (!isreturn) {
+  //  TheFunction->getBasicBlockList().push_back(EntryBB);
+  //  Builder.SetInsertPoint(EntryBB);
+  //} else
+  //  isreturn = false;
+  //// PHINode *PN = Builder.CreatePHI(Type::getDoubleTy(TheContext), 1,
+  //// "whiletmp");
+
+  //// PN->addIncoming(DoV, DoBB);
+  //// PN->addIncoming(ElseV, ElseBB);
   return Constant::getNullValue(Type::getDoubleTy(TheContext));
 }
-//´ıÍêÉÆ  Óï¾ä
+
+llvm::Function *get_printf() {
+  const char *fun_name = "printf";
+  llvm::Function *func = TheModule->getFunction(fun_name);
+  if (func == nullptr) {
+    llvm::FunctionType *func_type = llvm::FunctionType::get(
+        llvm::Type::getInt32Ty(TheModule->getContext()),
+        {llvm::Type::getInt8PtrTy(TheModule->getContext())}, true);
+    func = llvm::Function::Create(func_type, llvm::GlobalValue::ExternalLinkage,
+                                  fun_name, TheModule.get());
+  }
+  return func;
+}
+
+//å¾…å®Œå–„  è¯­å¥
 Value *PrintExprAST::codegen() {
   // Look up the name in the global module table.
-  Function *CalleeF = TheModule->getFunction("sin"); ////´ËÎ»ÖÃĞè¸ü¸Ä
+  Function *CalleeF = get_printf();
   if (!CalleeF)
-    return LogErrorV("Unknown function referenced on [printf]");
+    return LogErrorV("Unknown function referenced on [PRINT]");
 
   // If argument mismatch error.
-  if (CalleeF->arg_size() != Args.size())
-    return LogErrorV("Incorrect # arguments passed");
+  /*if (CalleeF->arg_size() != Args.size())
+    return LogErrorV("Incorrect # arguments passed");*/
 
   std::vector<Value *> ArgsV;
   for (unsigned i = 0, e = Args.size(); i != e; ++i) {
@@ -1211,10 +1328,14 @@ Value *PrintExprAST::codegen() {
     if (!ArgsV.back())
       return nullptr;
   }
+
+  // std::initializer_list<Value *> lArgs;
+  auto str = Args[0]->codegen();
   return Builder.CreateCall(CalleeF, ArgsV, "calltmp");
 }
 // TODO
 Value *ReturnExprAST::codegen() {
+  isreturn = true;
   return Builder.CreateRet(returnCont->codegen());
 }
 
@@ -1252,7 +1373,7 @@ Function *FunctionAST::codegen() {
   BasicBlock *BB = BasicBlock::Create(TheContext, "entry", TheFunction);
   Builder.SetInsertPoint(BB);
 
-   // Create a subprogram DIE for this function.
+  // Create a subprogram DIE for this function.
   DIFile *Unit = DBuilder->createFile(KSDbgInfo.TheCU->getFilename(),
                                       KSDbgInfo.TheCU->getDirectory());
 
@@ -1293,7 +1414,7 @@ Function *FunctionAST::codegen() {
     verifyFunction(*TheFunction);
 
     // Optimize the function.
-    // TheFPM->run(*TheFunction);
+    TheFPM->run(*TheFunction);
 
     TheFunction->viewCFG();
     return TheFunction;
@@ -1317,7 +1438,7 @@ static void InitializeModuleAndPassManager() {
   // Create a new pass manager attached to it.
   TheFPM = llvm::make_unique<legacy::FunctionPassManager>(TheModule.get());
 
-  // Promote allocas to registers.  ÓÅ»¯ÄÚ´æ·ÖÅä
+  // Promote allocas to registers.  ä¼˜åŒ–å†…å­˜åˆ†é…
   TheFPM->add(createPromoteMemoryToRegisterPass());
   // Do simple "peephole" optimizations and bit-twiddling optzns.
   TheFPM->add(createInstructionCombiningPass());
@@ -1334,7 +1455,7 @@ static void InitializeModuleAndPassManager() {
 static void HandleDefinition() {
   if (auto FnAST = ParseDefinition()) {
     if (auto *FnIR = FnAST->codegen()) {
-      std::cout << "\n\n\n******ÖĞ¼ä´úÂëÉú³É******\n\n" << std::endl;
+      std::cout << "\n\n\n******ä¸­é—´ä»£ç ç”Ÿæˆ******\n\n" << std::endl;
       fprintf(stderr, "Read function definition:");
       FnIR->print(errs());
       fprintf(stderr, "\n");
@@ -1398,8 +1519,8 @@ static void HandleTopLevelExpression() {
 static void MainLoop() {
   while (true) {
     fprintf(stderr, "ready> ");
-    getNextToken();
     switch (CurTok) {
+    case '$':
     case tok_eof:
       return;
     case ';': // ignore top-level semicolons.
@@ -1412,10 +1533,34 @@ static void MainLoop() {
          handleextern();
          break;*/
     default:
-      HandleTopLevelExpression();
+      // HandleTopLevelExpression();
+      getNextToken();
       break;
     }
+    /*getNextToken();*/
   }
+}
+
+//===----------------------------------------------------------------------===//
+// "Library" functions that can be "extern'd" from user code.
+//===----------------------------------------------------------------------===//
+
+#ifdef _WIN32
+#define DLLEXPORT __declspec(dllexport)
+#else
+#define DLLEXPORT
+#endif
+
+/// putchard - putchar that takes a double and returns 0.
+extern "C" DLLEXPORT double putchard(double X) {
+  fputc((char)X, stderr);
+  return 0;
+}
+
+/// printd - printf that takes a double prints it as "%f\n", returning 0.
+extern "C" DLLEXPORT double printd(double X) {
+  fprintf(stderr, "%f\n", X);
+  return 0;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1435,14 +1580,14 @@ int main() {
   BinopPrecedence['/'] = 40; // highest.
 
   // Make the module, which holds all the code.
-  TheModule = llvm::make_unique<Module>("my cool jit", TheContext);
+  // TheModule = llvm::make_unique<Module>("my cool jit", TheContext);
   TheJIT = llvm::make_unique<KaleidoscopeJIT>();
   InitializeModuleAndPassManager();
 
-   // Construct the DIBuilder, we do this here because we need the module.
+  // Construct the DIBuilder, we do this here because we need the module.
   DBuilder = llvm::make_unique<DIBuilder>(*TheModule);
 
-   // Create the compile unit for the module.
+  // Create the compile unit for the module.
   // Currently down as "fib.ks" as a filename since we're redirecting stdin
   // but we'd like actual source locations.
   KSDbgInfo.TheCU = DBuilder->createCompileUnit(
@@ -1451,7 +1596,60 @@ int main() {
   // Run the main "interpreter loop" now.
   MainLoop();
 
-    // Finalize the debug info.
+  // Initialize the target registry etc.
+  /*InitializeAllTargetInfos();
+  InitializeAllTargets();
+  InitializeAllTargetMCs();
+  InitializeAllAsmParsers();
+  InitializeAllAsmPrinters();*/
+
+  auto TargetTriple = sys::getDefaultTargetTriple();
+  TheModule->setTargetTriple(TargetTriple);
+
+  std::string Error;
+  auto Target = TargetRegistry::lookupTarget(TargetTriple, Error);
+
+  // Print an error and exit if we couldn't find the requested target.
+  // This generally occurs if we've forgotten to initialise the
+  // TargetRegistry or we have a bogus target triple.
+  if (!Target) {
+    errs() << Error;
+    return 1;
+  }
+
+  auto CPU = "generic";
+  auto Features = "";
+
+  TargetOptions opt;
+  auto RM = Optional<Reloc::Model>();
+  auto TheTargetMachine =
+      Target->createTargetMachine(TargetTriple, CPU, Features, opt, RM);
+
+  TheModule->setDataLayout(TheTargetMachine->createDataLayout());
+
+  auto Filename = "output.o";
+  std::error_code EC;
+  raw_fd_ostream dest(Filename, EC, sys::fs::F_None);
+
+  if (EC) {
+    errs() << "Could not open file: " << EC.message();
+    return 1;
+  }
+
+  legacy::PassManager pass;
+  auto FileType = TargetMachine::CGFT_ObjectFile;
+
+  if (TheTargetMachine->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
+    errs() << "TheTargetMachine can't emit a file of this type";
+    return 1;
+  }
+
+  pass.run(*TheModule);
+  dest.flush();
+
+  outs() << "Wrote " << Filename << "\n";
+
+  // Finalize the debug info.
   DBuilder->finalize();
   // Print out all of the generated code.
   TheModule->print(errs(), nullptr);
